@@ -1,0 +1,13 @@
+{
+  "name": "zhaopin-controller",
+  "version": "1.0.0",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check db.js && node --check delivery-stats.js && node --check feishu-client.js && node --check delivery-worker.js && node --check run_batch.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0"
+  }
+}

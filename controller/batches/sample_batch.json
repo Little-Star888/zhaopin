@@ -1,0 +1,13 @@
+{
+  "batchId": "BATCH-DEMO-01",
+  "tasks": [
+    {
+      "city": "北京",
+      "keyword": "AI产品经理"
+    },
+    {
+      "city": "上海",
+      "keyword": "数据产品经理"
+    }
+  ]
+}

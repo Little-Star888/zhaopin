@@ -1,0 +1,61 @@
+# Dependencies
+controller/node_modules/
+
+# Local runtime state
+controller/data/
+controller/*.db
+controller/*.db-*
+controller/results.json
+controller/status.json
+controller/task_id_counter.json
+controller/task_queue.json
+controller/runtime_config.json
+controller/feishu_targets.json
+controller/batches/output/
+controller/batches/.tmp/
+tests/acceptance/test-artifacts/
+tests/*.py
+
+# Local credentials and crawler outputs
+cookies/
+output/
+spiders/output/
+**/__pycache__/
+*.pyc
+
+# Legacy or machine-specific artifacts not shipped in the private repo
+crawl_and_push.py
+curl_crawler.py
+playwright_crawler.py
+simple_crawler.py
+crawler/background.js
+crawler/content.js
+crawler/manifest.json
+crawler/popup.html
+crawler/popup.js
+crawler/extension/*.backup.*
+crawler/extension/*.md
+crawler/extension/ai_browser_bot.py
+crawler/extension/log_analyzer.py
+crawler/extension/test-runner.html
+feishu/
+spiders/
+controller/OPENCLAW_PROTOCOL.md
+controller/cleanup_feishu_alerts.js
+controller/batches/beijing_pm_full_coverage.json
+controller/batches/hangzhou_pm_full_coverage.json
+controller/batches/pm_hz_sz_live_validation.json
+controller/batches/shanghai_pm_full_coverage.json
+controller/batches/shenzhen_pm_senior_full_coverage.json
+controller/batches/sim_batch.json
+
+# Internal planning and handoff docs
+SKILL.md
+DEPLOY.md
+COMPLETE_RUNBOOK.md
+SUCCESSOR_HANDOFF.md
+NEXT_AI_HANDOFF*.md
+EXECUTION_PLAN*.md
+*_REPORT.md
+RUNTIME_CONFIG_SYNC.md
+PHASE1_LIVE_ACCEPTANCE_PLAN.md

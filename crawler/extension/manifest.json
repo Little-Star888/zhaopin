@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Boss直聘职位采集器",
+  "version": "1.0.0",
+  "description": "自动采集Boss直聘职位，推送飞书多维表格",
+  "permissions": [
+    "storage",
+    "alarms",
+    "cookies",
+    "activeTab",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://www.zhipin.com/*",
+    "https://open.feishu.cn/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.zhipin.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Boss直聘职位采集器"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "defaultTarget": "demo",
+  "targets": {
+    "demo": {
+      "appId": "your_app_id",
+      "appSecret": "your_app_secret",
+      "appToken": "your_app_token",
+      "tableId": "your_table_id",
+      "description": "示例飞书表"
+    }
+  }
+}
+
