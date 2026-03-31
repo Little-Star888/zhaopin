@@ -8,6 +8,7 @@ import {
   fetchDeliveryList, uploadResume, fetchResume,
   updateResumeContent, getAIConfig, saveAIConfig,
   optimizeResume, matchJobs, exportPDFViaAPI, clearAllJobs,
+  deepThink, saveDeepThinkConfig, saveSecondaryModel,
 } from './dashboard-api.js';
 
 /* ==================== Toast ==================== */
@@ -1179,6 +1180,10 @@ const RESUME_TEMPLATE_STORAGE_KEY = 'jobhunter_resume_template';
 const RESUME_TEMPLATE_OPTIONS = [
   { id: 'structured', label: '结构版' },
   { id: 'timeline', label: '时间版' },
+  { id: 'modern', label: '现代版' },
+  { id: 'classic', label: '经典版' },
+  { id: 'compact', label: '紧凑版' },
+  { id: 'elegant', label: '优雅版' },
 ];
 let currentResumeTemplate = readStoredResumeTemplate();
 
@@ -1376,6 +1381,34 @@ function renderResumeSectionItems(section, templateId) {
     }).join('');
   }
 
+  if (templateId === 'modern') {
+    return section.items.map((item) => `
+      <div class="resume-card">${escapeHtml(item)}</div>
+    `).join('');
+  }
+
+  if (templateId === 'classic') {
+    return `
+      <ol class="resume-ordered-list">
+        ${section.items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+      </ol>
+    `;
+  }
+
+  if (templateId === 'compact') {
+    return `
+      <div class="resume-compact-items">
+        ${section.items.map(item => `<span class="resume-compact-item">${escapeHtml(item)}</span>`).join('')}
+      </div>
+    `;
+  }
+
+  if (templateId === 'elegant') {
+    return section.items.map((item) => `
+      <div class="resume-elegant-item">${escapeHtml(item)}</div>
+    `).join('');
+  }
+
   return `
     <ul class="resume-list">
       ${section.items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
@@ -1479,6 +1512,23 @@ function loadResumeView() {
               <input class="aiinp" id="ws-ai-model" placeholder="glm-5">
             </div>
             <button class="res-btn" id="ws-ai-save-btn" style="margin-top:6px">保存配置</button>
+            <div class="deep-think-toggle" style="margin-top:12px">
+              <label class="dt-toggle-label">
+                <span>深度思考</span>
+                <input type="checkbox" id="ws-dt-toggle" class="dt-toggle-input">
+                <span class="dt-toggle-slider"></span>
+              </label>
+            </div>
+            <div class="secondary-model-section" id="ws-secondary-model">
+              <button class="secondary-model-section__toggle" id="ws-sec-model-toggle" type="button">▶ 第二模型配置</button>
+              <div class="secondary-model-section__body" id="ws-sec-model-body" style="display:none">
+                <div class="aif"><label>Provider</label><select class="aiinp" id="ws-sec-provider" style="cursor:pointer">${providerOptions}</select></div>
+                <div class="aif"><label>API Base URL</label><input class="aiinp" id="ws-sec-base-url" placeholder="https://api.openai.com/v1"></div>
+                <div class="aif"><label>API Key</label><input class="aiinp" type="password" id="ws-sec-api-key" placeholder="输入第二模型 API Key" autocomplete="off"></div>
+                <div class="aif"><label>模型名称</label><input class="aiinp" id="ws-sec-model" placeholder="gpt-4o"></div>
+                <button class="res-btn" id="ws-sec-save-btn" style="margin-top:6px">保存第二模型</button>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -1550,6 +1600,10 @@ function renderResumeDualMode(contentMd, viewMode = 'default') {
         <button class="res-btn res-btn--ai" id="${idPrefix}-btn-ai-optimize" data-view="${viewMode}"
                 ${!aiConfigured ? 'disabled title="请先配置 AI"' : ''}>
           AI 优化简历
+        </button>
+        <button class="res-btn res-btn--dt" id="${idPrefix}-btn-deep-think" data-view="${viewMode}"
+                ${!aiConfigured ? 'disabled title="请先配置 AI"' : ''}>
+          深度思考
         </button>
         <button class="res-btn res-btn--g" id="${idPrefix}-btn-ai-cfg" data-view="${viewMode}">AI 配置</button>
         ${renderResumeTemplateSelector(viewMode)}
@@ -1726,13 +1780,12 @@ function renderResumeEdit(contentMd, viewMode = 'default') {
   const idPrefix = viewMode === 'default' ? 'def' : (isSplit ? 'sp' : 'exp');
   const taId = isSplit ? 'sp-resume-edit-ta' : (viewMode === 'default' ? 'resume-edit-ta' : 'resume-edit-ta-exp');
   const previewId = `${idPrefix}-resume-edit-preview`;
-  const previewMaxHeight = isSplit ? '300px' : '600px';
   return `
     <div class="resume-edit-dual" style="display:flex;flex-direction:column;gap:16px;align-items:stretch;">
       <div class="resume-edit-dual__input" style="display:none">
         <textarea class="res-ta resume-source-buffer" id="${taId}">${escapeHtml(contentMd || '')}</textarea>
       </div>
-      <div class="resume-edit-dual__preview" id="${previewId}" style="flex:1;min-width:0;max-height:${previewMaxHeight};overflow-y:auto;border:2px solid var(--c-black);">
+      <div class="resume-edit-dual__preview" id="${previewId}" style="flex:1;min-width:0;overflow-y:auto;">
         ${renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: true, viewMode })}
       </div>
     </div>`;
@@ -1905,6 +1958,143 @@ async function handleAIOptimize(btn, viewMode = 'default') {
   } finally {
     btn.textContent = originalText;
     btn.disabled = !aiConfigured;
+  }
+}
+
+/* ==================== M5: 深度思考 ==================== */
+
+/**
+ * 处理深度思考按钮点击
+ */
+async function handleDeepThink(btn, viewMode = 'default') {
+  if (!aiConfigured) {
+    showToast('请先配置 AI', 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = '思考中...';
+
+  try {
+    let targetJobId;
+    if (viewMode === 'split') {
+      targetJobId = currentSplitJobId;
+    } else {
+      const deliveryData = await fetchDeliveryList();
+      const deliveryJobs = deliveryData.jobs || [];
+      targetJobId = deliveryJobs.length > 0 ? deliveryJobs[0].id : null;
+    }
+
+    if (!targetJobId) {
+      showToast('请先选择或收藏岗位', 'error');
+      btn.textContent = originalText;
+      btn.disabled = false;
+      return;
+    }
+
+    const data = await deepThink('分析候选人与岗位匹配度', targetJobId);
+    const result = data.result || data;
+
+    renderDeepThinkPanel(result, viewMode);
+    showToast('深度思考完成', 'success');
+  } catch (err) {
+    showToast('深度思考失败: ' + err.message, 'error');
+  } finally {
+    btn.textContent = originalText;
+    btn.disabled = !aiConfigured;
+  }
+}
+
+/**
+ * 渲染深度思考结果面板
+ */
+function renderDeepThinkPanel(result, viewMode) {
+  const containerId = viewMode === 'split' ? 'sp-resume-view' : (viewMode === 'default' ? 'def-resume-view' : 'exp-resume-view');
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const panelId = viewMode === 'split' ? 'sp-dt-panel' : (viewMode === 'default' ? 'def-dt-panel' : 'exp-dt-panel');
+  let panel = document.getElementById(panelId);
+  if (panel) panel.remove();
+
+  const finalAnswer = result.final_answer || result.answer || '暂无结果';
+  const logs = result.logs || result.trace || [];
+  const modeUsed = result.mode_used || '';
+  const roundsUsed = result.rounds_used || '';
+  const stopReason = result.stop_reason || '';
+
+  const logsHtml = Array.isArray(logs) ? logs.map((log, i) =>
+    `<div class="deep-think-panel__log-item"><strong>Round ${i + 1}:</strong> ${typeof log === 'string' ? log : JSON.stringify(log)}</div>`
+  ).join('') : `<pre>${typeof logs === 'string' ? logs : JSON.stringify(logs, null, 2)}</pre>`;
+
+  const metaHtml = [
+    modeUsed ? `模式: ${modeUsed}` : '',
+    roundsUsed ? `轮次: ${roundsUsed}` : '',
+    stopReason ? `停止原因: ${stopReason}` : '',
+  ].filter(Boolean).join(' · ');
+
+  const panelHtml = `
+    <div class="deep-think-panel" id="${panelId}">
+      <div class="deep-think-panel__header">
+        <h4 class="deep-think-panel__title">🧠 深度思考结果</h4>
+        ${metaHtml ? `<span class="deep-think-panel__meta">${metaHtml}</span>` : ''}
+        <button class="deep-think-panel__close" data-dt-close="${panelId}">&times;</button>
+      </div>
+      <div class="deep-think-panel__answer">${finalAnswer.replace(/\n/g, '<br>')}</div>
+      ${logs.length ? `
+        <div class="deep-think-panel__trace">
+          <button class="deep-think-panel__trace-toggle" data-dt-trace="${panelId}">▶ 思考过程</button>
+          <div class="deep-think-panel__trace-body" style="display:none">${logsHtml}</div>
+        </div>
+      ` : ''}
+    </div>
+  `;
+
+  container.insertAdjacentHTML('afterbegin', panelHtml);
+
+  const newPanel = document.getElementById(panelId);
+  if (newPanel) {
+    const closeBtn = newPanel.querySelector(`[data-dt-close="${panelId}"]`);
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => newPanel.remove());
+    }
+    const traceToggle = newPanel.querySelector(`[data-dt-trace="${panelId}"]`);
+    if (traceToggle) {
+      traceToggle.addEventListener('click', () => {
+        const body = newPanel.querySelector('.deep-think-panel__trace-body');
+        if (!body) return;
+        const open = body.style.display !== 'none';
+        body.style.display = open ? 'none' : '';
+        traceToggle.textContent = (open ? '▶' : '▼') + ' 思考过程';
+      });
+    }
+  }
+}
+
+/**
+ * 保存第二模型配置
+ */
+async function handleSecondaryModelSave(prefix) {
+  const provider = document.getElementById(`${prefix}-sec-provider`)?.value;
+  const apiKey = document.getElementById(`${prefix}-sec-api-key`)?.value.trim();
+  const baseUrl = document.getElementById(`${prefix}-sec-base-url`)?.value.trim();
+  const model = document.getElementById(`${prefix}-sec-model`)?.value.trim();
+  const saveBtn = document.getElementById(`${prefix}-sec-save-btn`);
+
+  if (!apiKey) { showToast('请输入第二模型 API Key', 'error'); return; }
+  if (!baseUrl) { showToast('请输入第二模型 Base URL', 'error'); return; }
+  if (!model) { showToast('请输入第二模型名称', 'error'); return; }
+
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中...'; }
+
+  try {
+    await saveSecondaryModel({ provider, api_key: apiKey, base_url: baseUrl, model_name: model });
+    showToast('第二模型配置已保存', 'success');
+  } catch (err) {
+    showToast('保存第二模型配置失败: ' + err.message, 'error');
+  } finally {
+    if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '保存第二模型'; }
   }
 }
 
@@ -2117,6 +2307,350 @@ const RESUME_DOCUMENT_CSS = `
     line-height: 1.8;
     white-space: pre-wrap;
     word-break: break-word;
+  }
+
+  /* === modern 模板 === */
+  .resume-sheet.resume-sheet--modern {
+    background: #ffffff;
+    color: #2c3e50;
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+  }
+
+  .resume-sheet--modern .resume-sheet__header {
+    padding: 32px 36px 24px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #ffffff;
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+  }
+
+  .resume-sheet--modern .resume-sheet__name {
+    font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    letter-spacing: 2px;
+  }
+
+  .resume-sheet--modern .resume-sheet__headline {
+    color: rgba(255, 255, 255, 0.9);
+  }
+
+  .resume-sheet--modern .resume-meta__item {
+    border: none;
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    border-radius: 20px;
+    font-size: 11px;
+  }
+
+  .resume-sheet--modern .resume-summary {
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  .resume-sheet--modern .resume-sheet__body {
+    padding: 24px 36px 32px;
+  }
+
+  .resume-sheet--modern .resume-section {
+    border: none;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 18px 20px;
+  }
+
+  .resume-sheet--modern .resume-section__title {
+    color: #667eea;
+    border-bottom-color: #667eea;
+  }
+
+  .resume-card {
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    border-left: 3px solid #667eea;
+    background: #ffffff;
+    font-size: 13px;
+    line-height: 1.8;
+    border-radius: 0 6px 6px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .resume-sheet--modern .resume-list li::before {
+    background: #667eea;
+    border-radius: 50%;
+    width: 5px;
+    height: 5px;
+    top: 12px;
+  }
+
+  /* === classic 模板 === */
+  .resume-sheet.resume-sheet--classic {
+    background: #ffffff;
+    color: #333333;
+    border: 2px solid #999;
+    box-shadow: none;
+  }
+
+  .resume-sheet--classic .resume-sheet__header {
+    padding: 30px 36px 22px;
+    border-bottom: 2px solid #333;
+    background: #ffffff;
+    text-align: center;
+  }
+
+  .resume-sheet--classic .resume-sheet__name {
+    font-family: 'SimSun', 'STSong', serif;
+    font-size: 32px;
+    letter-spacing: 6px;
+  }
+
+  .resume-sheet--classic .resume-sheet__headline {
+    color: #555;
+    font-weight: 400;
+    font-size: 14px;
+  }
+
+  .resume-sheet--classic .resume-meta {
+    justify-content: center;
+  }
+
+  .resume-sheet--classic .resume-meta__item {
+    border: 1px solid #999;
+    background: transparent;
+    font-size: 12px;
+  }
+
+  .resume-sheet--classic .resume-summary {
+    text-align: center;
+    color: #666;
+  }
+
+  .resume-sheet--classic .resume-sheet__body {
+    padding: 20px 36px 30px;
+  }
+
+  .resume-sheet--classic .resume-section {
+    border: none;
+    border-bottom: 1px solid #ddd;
+    background: transparent;
+    padding: 14px 0;
+  }
+
+  .resume-sheet--classic .resume-section:last-child {
+    border-bottom: none;
+  }
+
+  .resume-sheet--classic .resume-section__title {
+    color: #333;
+    border-bottom: 2px solid #333;
+    font-size: 14px;
+    letter-spacing: 2px;
+  }
+
+  .resume-ordered-list {
+    margin: 0;
+    padding: 0 0 0 22px;
+    display: grid;
+    gap: 6px;
+  }
+
+  .resume-ordered-list li {
+    font-size: 13px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #444;
+  }
+
+  /* === compact 模板 === */
+  .resume-sheet.resume-sheet--compact {
+    background: #fafafa;
+    color: #2d2d2d;
+    border: 2px solid #e0e0e0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+
+  .resume-sheet--compact .resume-sheet__header {
+    padding: 16px 22px 12px;
+    background: #2d2d2d;
+    color: #ffffff;
+    border-bottom: 3px solid #ff6b35;
+  }
+
+  .resume-sheet--compact .resume-sheet__name {
+    font-size: 22px;
+    letter-spacing: 0;
+  }
+
+  .resume-sheet--compact .resume-sheet__headline {
+    color: #ff6b35;
+    font-size: 12px;
+    margin-top: 4px;
+  }
+
+  .resume-sheet--compact .resume-meta__item {
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: transparent;
+    color: #ddd;
+    font-size: 10px;
+    min-height: 22px;
+    padding: 2px 8px;
+  }
+
+  .resume-sheet--compact .resume-summary {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 11px;
+    margin-top: 8px;
+  }
+
+  .resume-sheet--compact .resume-sheet__body {
+    padding: 12px 22px 16px;
+    gap: 8px;
+  }
+
+  .resume-sheet--compact .resume-section {
+    border: 1px solid #e0e0e0;
+    padding: 10px 14px;
+    background: #ffffff;
+  }
+
+  .resume-sheet--compact .resume-section__title {
+    font-size: 11px;
+    margin-bottom: 6px;
+    padding-bottom: 2px;
+    border-bottom-width: 2px;
+    border-bottom-color: #ff6b35;
+    color: #ff6b35;
+  }
+
+  .resume-compact-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .resume-compact-item {
+    display: inline-block;
+    padding: 4px 10px;
+    font-size: 11px;
+    line-height: 1.6;
+    background: #f5f5f5;
+    border: 1px solid #e8e8e8;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .resume-sheet--compact .resume-list li {
+    font-size: 11px;
+    line-height: 1.6;
+    padding-left: 10px;
+  }
+
+  .resume-sheet--compact .resume-list li::before {
+    width: 4px;
+    height: 4px;
+    top: 9px;
+    border-radius: 50%;
+    background: #ff6b35;
+  }
+
+  /* === elegant 模板 === */
+  .resume-sheet.resume-sheet--elegant {
+    background: #fef9f3;
+    color: #3a2e2a;
+    border: 1px solid #d4c5b0;
+    box-shadow: 0 6px 20px rgba(100, 80, 60, 0.08);
+  }
+
+  .resume-sheet--elegant .resume-sheet__header {
+    padding: 36px 40px 26px;
+    background: linear-gradient(180deg, #f5ebe0 0%, #fef9f3 100%);
+    border-bottom: 1px solid #d4c5b0;
+    text-align: center;
+  }
+
+  .resume-sheet--elegant .resume-sheet__name {
+    font-family: 'STKaiti', 'KaiTi', 'STSong', serif;
+    font-size: 36px;
+    font-weight: 400;
+    letter-spacing: 8px;
+    color: #5a3e36;
+  }
+
+  .resume-sheet--elegant .resume-sheet__headline {
+    color: #b08968;
+    font-weight: 400;
+    font-size: 14px;
+    letter-spacing: 3px;
+  }
+
+  .resume-sheet--elegant .resume-meta {
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .resume-sheet--elegant .resume-meta__item {
+    border: none;
+    border-bottom: 1px solid #d4c5b0;
+    background: transparent;
+    font-size: 12px;
+    color: #7a6560;
+    padding: 4px 8px;
+  }
+
+  .resume-sheet--elegant .resume-summary {
+    text-align: center;
+    color: #8a7a72;
+    font-style: italic;
+  }
+
+  .resume-sheet--elegant .resume-sheet__body {
+    padding: 24px 40px 36px;
+  }
+
+  .resume-sheet--elegant .resume-section {
+    border: none;
+    background: transparent;
+    padding: 14px 0;
+    border-bottom: 1px dashed #d4c5b0;
+  }
+
+  .resume-sheet--elegant .resume-section:last-child {
+    border-bottom: none;
+  }
+
+  .resume-sheet--elegant .resume-section__title {
+    color: #b08968;
+    border-bottom: 2px solid #b08968;
+    font-size: 13px;
+    letter-spacing: 3px;
+    text-transform: none;
+  }
+
+  .resume-elegant-item {
+    padding: 6px 0;
+    font-size: 13px;
+    line-height: 2;
+    color: #5a4e48;
+    border-bottom: 1px dotted #e8ddd0;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .resume-elegant-item:last-child {
+    border-bottom: none;
+  }
+
+  .resume-sheet--elegant .resume-list li {
+    color: #5a4e48;
+  }
+
+  .resume-sheet--elegant .resume-list li::before {
+    background: #b08968;
+    border-radius: 50%;
+    width: 5px;
+    height: 5px;
+    top: 12px;
   }
 
   @media print {
@@ -2625,6 +3159,8 @@ function bindResumeDualModeEvents(container, viewMode = 'default') {
       saveResumeContent(view);
     } else if (btn.id.includes('btn-ai-optimize')) {
       await handleAIOptimize(btn, view);
+    } else if (btn.id.includes('btn-deep-think')) {
+      await handleDeepThink(btn, view);
     }
   });
 }
@@ -2934,6 +3470,8 @@ function loadSplitRight() {
       <button class="res-btn res-btn--g" id="sp-btn-save">保存</button>
       <button class="res-btn res-btn--ai" id="sp-btn-ai-optimize"
               ${!aiConfigured ? 'disabled title="请先配置 AI"' : ''}>AI 优化</button>
+      <button class="res-btn res-btn--dt" id="sp-btn-deep-think"
+              ${!aiConfigured ? 'disabled title="请先配置 AI"' : ''}>深度思考</button>
       <button class="res-btn res-btn--g" id="sp-btn-ai-cfg">AI 配置</button>
       <label class="resume-template-switch" for="sp-resume-template">
         <span>模板</span>
@@ -2963,6 +3501,23 @@ function loadSplitRight() {
       <div class="aif"><label>API Key</label><input class="aiinp" type="password" id="sp-ai-api-key" placeholder="输入你的 API Key" autocomplete="off"></div>
       <div class="aif"><label>模型名称</label><input class="aiinp" id="sp-ai-model" placeholder="glm-5"></div>
       <button class="res-btn" id="sp-ai-save-btn" style="margin-top:6px">保存配置</button>
+      <div class="deep-think-toggle" style="margin-top:12px">
+        <label class="dt-toggle-label">
+          <span>深度思考</span>
+          <input type="checkbox" id="sp-dt-toggle" class="dt-toggle-input">
+          <span class="dt-toggle-slider"></span>
+        </label>
+      </div>
+      <div class="secondary-model-section" id="sp-secondary-model">
+        <button class="secondary-model-section__toggle" id="sp-sec-model-toggle" type="button">▶ 第二模型配置</button>
+        <div class="secondary-model-section__body" id="sp-sec-model-body" style="display:none">
+          <div class="aif"><label>Provider</label><select class="aiinp" id="sp-sec-provider" style="cursor:pointer">${providerOptions}</select></div>
+          <div class="aif"><label>API Base URL</label><input class="aiinp" id="sp-sec-base-url" placeholder="https://api.openai.com/v1"></div>
+          <div class="aif"><label>API Key</label><input class="aiinp" type="password" id="sp-sec-api-key" placeholder="输入第二模型 API Key" autocomplete="off"></div>
+          <div class="aif"><label>模型名称</label><input class="aiinp" id="sp-sec-model" placeholder="gpt-4o"></div>
+          <button class="res-btn" id="sp-sec-save-btn" style="margin-top:6px">保存第二模型</button>
+        </div>
+      </div>
     </div>
   `;
 
@@ -3147,6 +3702,50 @@ function bindSplitEvents() {
     aiCfgBtn.addEventListener('click', () => {
       const cfgPanel = document.getElementById('spAICfg');
       if (cfgPanel) cfgPanel.classList.toggle('on');
+    });
+  }
+
+  // 深度思考按钮（分屏）
+  const spDtBtn = document.getElementById('sp-btn-deep-think');
+  if (spDtBtn) {
+    spDtBtn.addEventListener('click', async () => {
+      if (!aiConfigured) { showToast('请先配置 AI', 'error'); return; }
+      const targetJobId = currentSplitJobId;
+      if (!targetJobId) { showToast('未选择目标岗位', 'error'); return; }
+      await handleDeepThink(spDtBtn, 'split');
+    });
+  }
+
+  // 深度思考开关（分屏）
+  const spDtToggle = document.getElementById('sp-dt-toggle');
+  if (spDtToggle) {
+    spDtToggle.addEventListener('change', async () => {
+      try {
+        await saveDeepThinkConfig({ enabled: spDtToggle.checked });
+        showToast(spDtToggle.checked ? '深度思考已开启' : '深度思考已关闭', 'success');
+        const wsDtToggle = document.getElementById('ws-dt-toggle');
+        if (wsDtToggle) wsDtToggle.checked = spDtToggle.checked;
+      } catch (err) {
+        showToast('保存深度思考配置失败: ' + err.message, 'error');
+        spDtToggle.checked = !spDtToggle.checked;
+      }
+    });
+  }
+
+  // 第二模型折叠 + 保存（分屏）
+  const spSecToggle = document.getElementById('sp-sec-model-toggle');
+  const spSecBody = document.getElementById('sp-sec-model-body');
+  if (spSecToggle && spSecBody) {
+    spSecToggle.addEventListener('click', () => {
+      const open = spSecBody.style.display !== 'none';
+      spSecBody.style.display = open ? 'none' : '';
+      spSecToggle.textContent = (open ? '▶' : '▼') + ' 第二模型配置';
+    });
+  }
+  const spSecSaveBtn = document.getElementById('sp-sec-save-btn');
+  if (spSecSaveBtn) {
+    spSecSaveBtn.addEventListener('click', async () => {
+      await handleSecondaryModelSave('sp');
     });
   }
 
@@ -3337,6 +3936,41 @@ function bindInlineAIConfigEvents() {
   if (wsSaveBtn) {
     wsSaveBtn.addEventListener('click', () => {
       handleInlineAISave();
+    });
+  }
+
+  // 深度思考开关
+  const wsDtToggle = document.getElementById('ws-dt-toggle');
+  if (wsDtToggle) {
+    wsDtToggle.addEventListener('change', async () => {
+      try {
+        await saveDeepThinkConfig({ enabled: wsDtToggle.checked });
+        showToast(wsDtToggle.checked ? '深度思考已开启' : '深度思考已关闭', 'success');
+        const spDtToggle = document.getElementById('sp-dt-toggle');
+        if (spDtToggle) spDtToggle.checked = wsDtToggle.checked;
+      } catch (err) {
+        showToast('保存深度思考配置失败: ' + err.message, 'error');
+        wsDtToggle.checked = !wsDtToggle.checked;
+      }
+    });
+  }
+
+  // 第二模型折叠切换
+  const wsSecToggle = document.getElementById('ws-sec-model-toggle');
+  const wsSecBody = document.getElementById('ws-sec-model-body');
+  if (wsSecToggle && wsSecBody) {
+    wsSecToggle.addEventListener('click', () => {
+      const open = wsSecBody.style.display !== 'none';
+      wsSecBody.style.display = open ? 'none' : '';
+      wsSecToggle.textContent = (open ? '▶' : '▼') + ' 第二模型配置';
+    });
+  }
+
+  // 第二模型保存
+  const wsSecSaveBtn = document.getElementById('ws-sec-save-btn');
+  if (wsSecSaveBtn) {
+    wsSecSaveBtn.addEventListener('click', async () => {
+      await handleSecondaryModelSave('ws');
     });
   }
 }

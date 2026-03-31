@@ -1133,19 +1133,11 @@ a {
     position: absolute;
     left: 0;
     right: 0;
-    border-top: 2px dashed rgba(230, 43, 30, 0.42);
+    border-top: none;
 }
 
 .resume-page-guide span {
-    position: absolute;
-    right: 0;
-    top: -12px;
-    padding: 2px 8px;
-    background: rgba(230, 43, 30, 0.92);
-    color: var(--c-white);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.4px;
+    display: none;
 }
 
 .resume-source-buffer {
@@ -1289,6 +1281,350 @@ a {
 .resume-sheet--timeline .resume-block.is-period .resume-block__marker {
     border-color: var(--c-red);
     box-shadow: 0 0 0 2px rgba(230, 43, 30, 0.3);
+}
+
+/* === modern 模板：清爽蓝白配色 === */
+.resume-sheet.resume-sheet--modern {
+    background: #ffffff;
+    color: #2c3e50;
+    border: none;
+    border-radius: 12px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+}
+
+.resume-sheet--modern .resume-sheet__header {
+    padding: 32px 36px 24px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #ffffff;
+    border-bottom: none;
+    border-radius: 12px 12px 0 0;
+}
+
+.resume-sheet--modern .resume-sheet__name {
+    font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    letter-spacing: 2px;
+}
+
+.resume-sheet--modern .resume-sheet__headline {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.resume-sheet--modern .resume-meta__item {
+    border: none;
+    background: rgba(255, 255, 255, 0.2);
+    color: #ffffff;
+    border-radius: 20px;
+    font-size: 11px;
+}
+
+.resume-sheet--modern .resume-summary {
+    color: rgba(255, 255, 255, 0.85);
+}
+
+.resume-sheet--modern .resume-sheet__body {
+    padding: 24px 36px 32px;
+}
+
+.resume-sheet--modern .resume-section {
+    border: none;
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 18px 20px;
+}
+
+.resume-sheet--modern .resume-section__title {
+    color: #667eea;
+    border-bottom-color: #667eea;
+}
+
+.resume-card {
+    padding: 10px 14px;
+    margin-bottom: 6px;
+    border-left: 3px solid #667eea;
+    background: #ffffff;
+    font-size: 13px;
+    line-height: 1.8;
+    border-radius: 0 6px 6px 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.resume-sheet--modern .resume-list li::before {
+    background: #667eea;
+    border-radius: 50%;
+    width: 5px;
+    height: 5px;
+    top: 12px;
+}
+
+/* === classic 模板：传统黑白商务风 === */
+.resume-sheet.resume-sheet--classic {
+    background: #ffffff;
+    color: #333333;
+    border: 2px solid #999;
+    box-shadow: none;
+}
+
+.resume-sheet--classic .resume-sheet__header {
+    padding: 30px 36px 22px;
+    border-bottom: 2px solid #333;
+    background: #ffffff;
+    text-align: center;
+}
+
+.resume-sheet--classic .resume-sheet__name {
+    font-family: 'SimSun', 'STSong', serif;
+    font-size: 32px;
+    letter-spacing: 6px;
+}
+
+.resume-sheet--classic .resume-sheet__headline {
+    color: #555;
+    font-weight: 400;
+    font-size: 14px;
+}
+
+.resume-sheet--classic .resume-meta {
+    justify-content: center;
+}
+
+.resume-sheet--classic .resume-meta__item {
+    border: 1px solid #999;
+    background: transparent;
+    font-size: 12px;
+}
+
+.resume-sheet--classic .resume-summary {
+    text-align: center;
+    color: #666;
+}
+
+.resume-sheet--classic .resume-sheet__body {
+    padding: 20px 36px 30px;
+}
+
+.resume-sheet--classic .resume-section {
+    border: none;
+    border-bottom: 1px solid #ddd;
+    background: transparent;
+    padding: 14px 0;
+}
+
+.resume-sheet--classic .resume-section:last-child {
+    border-bottom: none;
+}
+
+.resume-sheet--classic .resume-section__title {
+    color: #333;
+    border-bottom: 2px solid #333;
+    font-size: 14px;
+    letter-spacing: 2px;
+}
+
+.resume-ordered-list {
+    margin: 0;
+    padding: 0 0 0 22px;
+    display: grid;
+    gap: 6px;
+}
+
+.resume-ordered-list li {
+    font-size: 13px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #444;
+}
+
+/* === compact 模板：紧凑高效单页 === */
+.resume-sheet.resume-sheet--compact {
+    background: #fafafa;
+    color: #2d2d2d;
+    border: 2px solid #e0e0e0;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.resume-sheet--compact .resume-sheet__header {
+    padding: 16px 22px 12px;
+    background: #2d2d2d;
+    color: #ffffff;
+    border-bottom: 3px solid #ff6b35;
+}
+
+.resume-sheet--compact .resume-sheet__name {
+    font-size: 22px;
+    letter-spacing: 0;
+}
+
+.resume-sheet--compact .resume-sheet__headline {
+    color: #ff6b35;
+    font-size: 12px;
+    margin-top: 4px;
+}
+
+.resume-sheet--compact .resume-meta__item {
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: transparent;
+    color: #ddd;
+    font-size: 10px;
+    min-height: 22px;
+    padding: 2px 8px;
+}
+
+.resume-sheet--compact .resume-summary {
+    color: rgba(255, 255, 255, 0.7);
+    font-size: 11px;
+    margin-top: 8px;
+}
+
+.resume-sheet--compact .resume-sheet__body {
+    padding: 12px 22px 16px;
+    gap: 8px;
+}
+
+.resume-sheet--compact .resume-section {
+    border: 1px solid #e0e0e0;
+    padding: 10px 14px;
+    background: #ffffff;
+}
+
+.resume-sheet--compact .resume-section__title {
+    font-size: 11px;
+    margin-bottom: 6px;
+    padding-bottom: 2px;
+    border-bottom-width: 2px;
+    border-bottom-color: #ff6b35;
+    color: #ff6b35;
+}
+
+.resume-compact-items {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.resume-compact-item {
+    display: inline-block;
+    padding: 4px 10px;
+    font-size: 11px;
+    line-height: 1.6;
+    background: #f5f5f5;
+    border: 1px solid #e8e8e8;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.resume-sheet--compact .resume-list li {
+    font-size: 11px;
+    line-height: 1.6;
+    padding-left: 10px;
+}
+
+.resume-sheet--compact .resume-list li::before {
+    width: 4px;
+    height: 4px;
+    top: 9px;
+    border-radius: 50%;
+    background: #ff6b35;
+}
+
+/* === elegant 模板：优雅水墨中式风 === */
+.resume-sheet.resume-sheet--elegant {
+    background: #fef9f3;
+    color: #3a2e2a;
+    border: 1px solid #d4c5b0;
+    box-shadow: 0 6px 20px rgba(100, 80, 60, 0.08);
+}
+
+.resume-sheet--elegant .resume-sheet__header {
+    padding: 36px 40px 26px;
+    background: linear-gradient(180deg, #f5ebe0 0%, #fef9f3 100%);
+    border-bottom: 1px solid #d4c5b0;
+    text-align: center;
+}
+
+.resume-sheet--elegant .resume-sheet__name {
+    font-family: 'STKaiti', 'KaiTi', 'STSong', serif;
+    font-size: 36px;
+    font-weight: 400;
+    letter-spacing: 8px;
+    color: #5a3e36;
+}
+
+.resume-sheet--elegant .resume-sheet__headline {
+    color: #b08968;
+    font-weight: 400;
+    font-size: 14px;
+    letter-spacing: 3px;
+}
+
+.resume-sheet--elegant .resume-meta {
+    justify-content: center;
+    gap: 6px;
+}
+
+.resume-sheet--elegant .resume-meta__item {
+    border: none;
+    border-bottom: 1px solid #d4c5b0;
+    background: transparent;
+    font-size: 12px;
+    color: #7a6560;
+    padding: 4px 8px;
+}
+
+.resume-sheet--elegant .resume-summary {
+    text-align: center;
+    color: #8a7a72;
+    font-style: italic;
+}
+
+.resume-sheet--elegant .resume-sheet__body {
+    padding: 24px 40px 36px;
+}
+
+.resume-sheet--elegant .resume-section {
+    border: none;
+    background: transparent;
+    padding: 14px 0;
+    border-bottom: 1px dashed #d4c5b0;
+}
+
+.resume-sheet--elegant .resume-section:last-child {
+    border-bottom: none;
+}
+
+.resume-sheet--elegant .resume-section__title {
+    color: #b08968;
+    border-bottom: 2px solid #b08968;
+    font-size: 13px;
+    letter-spacing: 3px;
+    text-transform: none;
+}
+
+.resume-elegant-item {
+    padding: 6px 0;
+    font-size: 13px;
+    line-height: 2;
+    color: #5a4e48;
+    border-bottom: 1px dotted #e8ddd0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.resume-elegant-item:last-child {
+    border-bottom: none;
+}
+
+.resume-sheet--elegant .resume-list li {
+    color: #5a4e48;
+}
+
+.resume-sheet--elegant .resume-list li::before {
+    background: #b08968;
+    border-radius: 50%;
+    width: 5px;
+    height: 5px;
+    top: 12px;
 }
 
 .resume-section__title {
@@ -1930,6 +2266,214 @@ a {
 .btn-ai-match.is-loading {
     opacity: 0.7;
     pointer-events: none;
+}
+
+/* ========================================
+   M5: 深度思考按钮
+   ======================================== */
+
+.res-btn--dt {
+    background: var(--c-blue);
+    color: var(--c-white);
+    border: 2px solid var(--c-blue);
+}
+
+.res-btn--dt:hover:not(:disabled) {
+    background: #1a3d7a;
+    border-color: #1a3d7a;
+    color: var(--c-white);
+}
+
+.res-btn--dt:disabled {
+    background: #444;
+    color: #666;
+    border-color: #555;
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+/* ========================================
+   M5: 深度思考结果面板
+   ======================================== */
+
+.deep-think-panel {
+    margin: 12px 0;
+    border: 2px solid var(--c-blue);
+    background: #1e2433;
+}
+
+.deep-think-panel__header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--c-blue);
+    color: var(--c-white);
+}
+
+.deep-think-panel__title {
+    font-size: 12px;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin: 0;
+    flex: 1;
+}
+
+.deep-think-panel__meta {
+    font-size: 10px;
+    opacity: 0.8;
+}
+
+.deep-think-panel__close {
+    background: none;
+    border: none;
+    color: var(--c-white);
+    font-size: 18px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 4px;
+}
+
+.deep-think-panel__close:hover {
+    opacity: 0.7;
+}
+
+.deep-think-panel__answer {
+    padding: 14px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--c-paper);
+}
+
+.deep-think-panel__trace {
+    border-top: 1px solid #333;
+    padding: 8px 14px;
+}
+
+.deep-think-panel__trace-toggle {
+    background: none;
+    border: none;
+    color: var(--c-gray);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 0;
+}
+
+.deep-think-panel__trace-toggle:hover {
+    color: var(--c-yellow);
+}
+
+.deep-think-panel__trace-body {
+    margin-top: 8px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.deep-think-panel__log-item {
+    font-size: 11px;
+    color: var(--c-gray);
+    padding: 6px 0;
+    border-bottom: 1px solid #2a2a2a;
+    line-height: 1.5;
+    font-family: 'Courier New', monospace;
+}
+
+.deep-think-panel__trace-body pre {
+    font-size: 11px;
+    color: var(--c-gray);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    font-family: 'Courier New', monospace;
+}
+
+/* ========================================
+   M5: 深度思考 Toggle 开关
+   ======================================== */
+
+.deep-think-toggle {
+    padding: 8px 0;
+}
+
+.dt-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--c-paper);
+}
+
+.dt-toggle-input {
+    display: none;
+}
+
+.dt-toggle-slider {
+    position: relative;
+    width: 36px;
+    height: 18px;
+    background: #444;
+    border: 2px solid #555;
+    transition: background 0.2s, border-color 0.2s;
+    flex-shrink: 0;
+}
+
+.dt-toggle-slider::after {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    width: 12px;
+    height: 12px;
+    background: var(--c-gray);
+    transition: transform 0.2s, background 0.2s;
+}
+
+.dt-toggle-input:checked + .dt-toggle-slider {
+    background: var(--c-blue);
+    border-color: var(--c-blue);
+}
+
+.dt-toggle-input:checked + .dt-toggle-slider::after {
+    transform: translateX(18px);
+    background: var(--c-white);
+}
+
+/* ========================================
+   M5: 第二模型配置折叠
+   ======================================== */
+
+.secondary-model-section {
+    margin-top: 12px;
+    border-top: 1px solid #444;
+    padding-top: 10px;
+}
+
+.secondary-model-section__toggle {
+    background: none;
+    border: none;
+    color: var(--c-yellow);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 4px 0;
+}
+
+.secondary-model-section__toggle:hover {
+    color: var(--c-red);
+}
+
+.secondary-model-section__body {
+    margin-top: 10px;
 }
 
 /* AI 智能匹配按钮 - 收藏列表（已配置 AI 时激活） */

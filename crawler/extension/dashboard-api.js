@@ -5,6 +5,80 @@
 
 const API_BASE = 'http://127.0.0.1:7893';
 
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function pingController(timeoutMs = 1200) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_BASE}/status`, {
+      method: 'GET',
+      signal: controller.signal
+    });
+    clearTimeout(timer);
+    return res.ok;
+  } catch (_) {
+    clearTimeout(timer);
+    return false;
+  }
+}
+
+async function wakeController(reason = 'dashboard_api_request') {
+  if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+    return { success: false, errorType: 'CONTROLLER_UNREACHABLE' };
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: 'WAKE_UP_CONTROLLER',
+      reason
+    });
+    if (response && response.success) {
+      return { success: true, data: response.data };
+    }
+    return {
+      success: false,
+      errorType: response?.errorType || 'CONTROLLER_UNREACHABLE',
+      error: response?.error || '',
+      extensionId: response?.extensionId || null
+    };
+  } catch (_) {
+    return { success: false, errorType: 'CONTROLLER_UNREACHABLE' };
+  }
+}
+
+async function ensureControllerAvailable(reason = 'dashboard_api_request') {
+  if (await pingController()) {
+    return { available: true };
+  }
+
+  const wakeResult = await wakeController(reason);
+  if (!wakeResult.success) {
+    return { available: false, errorType: wakeResult.errorType, error: wakeResult.error, extensionId: wakeResult.extensionId };
+  }
+
+  // native host 返回成功，轮询确认 HTTP 端口就绪
+  // 前 4 次(1秒)视作启动窗口期，返回 STARTING 临时态让 UI 可自动重试
+  const SHORT_WINDOW = 4;
+  for (let attempt = 0; attempt < 16; attempt += 1) {
+    if (await pingController()) {
+      return { available: true };
+    }
+    if (attempt === SHORT_WINDOW - 1) {
+      return {
+        available: false,
+        errorType: 'CONTROLLER_STARTING',
+        error: 'Controller is starting up, please wait...'
+      };
+    }
+    await wait(250);
+  }
+
+  return { available: false, errorType: 'CONTROLLER_UNREACHABLE', error: 'Controller started but /status still unreachable' };
+}
+
 /**
  * 统一 fetch 封装，处理异常兜底
  * @param {string} url 请求路径
@@ -13,6 +87,14 @@ const API_BASE = 'http://127.0.0.1:7893';
  */
 async function request(url, options = {}) {
   try {
+    const check = await ensureControllerAvailable(`request:${url}`);
+    if (!check.available) {
+      const err = new Error('后端未启动，请先启动 Controller');
+      err.errorType = check.errorType || 'CONTROLLER_UNREACHABLE';
+      if (check.extensionId) err.extensionId = check.extensionId;
+      throw err;
+    }
+
     const res = await fetch(`${API_BASE}${url}`, {
       ...options,
       headers: {
@@ -28,7 +110,10 @@ async function request(url, options = {}) {
     return await res.json();
   } catch (err) {
     if (err instanceof TypeError) {
-      throw new Error('后端未启动，请先启动 Controller');
+      const typeErr = new Error('后端未启动，请先启动 Controller');
+      typeErr.errorType = err.errorType || 'CONTROLLER_UNREACHABLE';
+      if (err.extensionId) typeErr.extensionId = err.extensionId;
+      throw typeErr;
     }
     throw err;
   }
@@ -94,7 +179,10 @@ export async function clearAllJobs() {
   } catch (error) {
     const message = error && error.message ? error.message : String(error);
     if (/404|Not found|服务端错误 \(404\)/i.test(message)) {
-      throw new Error('后端未加载清空接口，请重启 Controller');
+      const err = new Error('后端未加载清空接口，请重启 Controller');
+      err.errorType = error.errorType;
+      err.extensionId = error.extensionId;
+      throw err;
     }
     throw error;
   }
@@ -173,6 +261,24 @@ export async function optimizeResume(jobId, instructions = '') {
 }
 
 /**
+ * AI 助手对话
+ * @param {number} jobId 目标岗位 ID
+ * @param {string} message 用户消息
+ * @param {Array<{role: string, text: string}>} conversationHistory 对话历史
+ */
+export async function chatWithAIAssistant(jobId, message, conversationHistory = []) {
+  return request('/api/ai/assistant', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      job_id: jobId,
+      message,
+      conversation_history: conversationHistory,
+    }),
+  });
+}
+
+/**
  * AI 智能匹配
  * @param {number[]} jobIds 待匹配的岗位 ID 列表
  */
@@ -187,14 +293,63 @@ export async function matchJobs(jobIds) {
 /**
  * 通过后端 API 导出简历为 PDF
  * 返回 PDF Blob（非 JSON），需直接下载
- * @param {string} contentMd 简历 Markdown 内容
+ * @param {string|{content_md?: string, content_html?: string, template_id?: string}} payloadOrContentMd
  * @returns {Promise<Blob>} PDF 二进制数据
  */
-export async function exportPDFViaAPI(contentMd) {
+/**
+ * 深度思考 API
+ * @param {string} task 思考任务描述
+ * @param {number} jobId 岗位 ID
+ */
+export async function deepThink(task, jobId) {
+  return request('/api/ai/deep-think', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ task, job_id: jobId }),
+  });
+}
+
+/**
+ * 保存深度思考配置（开关）
+ * @param {{ enabled: boolean }} config
+ */
+export async function saveDeepThinkConfig(config) {
+  return request('/api/ai/deep-think/config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+}
+
+/**
+ * 保存第二模型配置
+ * @param {{ provider: string, base_url: string, api_key: string, model_name: string }} config
+ */
+export async function saveSecondaryModel(config) {
+  return request('/api/ai/secondary-model', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  });
+}
+
+export async function exportPDFViaAPI(payloadOrContentMd) {
+  const check = await ensureControllerAvailable('export_pdf');
+  if (!check.available) {
+    const err = new Error('后端未启动，请先启动 Controller');
+    err.errorType = check.errorType || 'CONTROLLER_UNREACHABLE';
+    if (check.extensionId) err.extensionId = check.extensionId;
+    throw err;
+  }
+
+  const payload = typeof payloadOrContentMd === 'string'
+    ? { content_md: payloadOrContentMd }
+    : (payloadOrContentMd || {});
+
   const res = await fetch(`${API_BASE}/api/resume/export-pdf`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content_md: contentMd }),
+    body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
