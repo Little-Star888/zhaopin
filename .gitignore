@@ -65,3 +65,47 @@ docs/ARCHITECTURE.md
 
 # Test artifacts
 test-resume-templates.html
+test-3pane-verify.html
+
+# Design reference files (not for distribution)
+crawler/extension/ai-optimize-3panel.html
+crawler/extension/constructivism-mockup.html
+crawler/extension/pagination-demo.html
+crawler/extension/resume-pagination-demo.html
+crawler/extension/resume-pagination-demo.txt
+crawler/extension/test-resume-model.html
+crawler/extension/test-output/
+crawler/extension/tests/
+crawler/extension/specs/
+crawler/extension/ai-bootstrap/
+
+# Backup files
+crawler/extension/*.bak
+
+# Node artifacts
+node_modules/
+package-lock.json
+
+# IDE / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Temporary scripts
+controller/_*.js
+controller/test_*.js
+controller/test-*.js
+
+# Internal project docs (not for repo)
+*_HANDOFF*.md
+*_DRAFT*.md
+*_STATUS*.md
+*_CRITERIA*.md
+*_DECISIONS*.md
+*_PRD*.md
+*_RULES*.md
+CURRENT_PRIORITY.md
+MULTI_PLATFORM_PHASE_PRD.md
+
+# Uploads and data
+controller/uploads/

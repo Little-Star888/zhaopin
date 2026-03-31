@@ -9,6 +9,7 @@ import {
   updateResumeContent, getAIConfig, saveAIConfig,
   optimizeResume, matchJobs, exportPDFViaAPI, clearAllJobs,
   deepThink, saveDeepThinkConfig, saveSecondaryModel,
+  chatWithAIAssistant,
 } from './dashboard-api.js';
 
 /* ==================== Toast ==================== */
@@ -1176,6 +1177,8 @@ let resumeViewInitialized = false;
 let currentResume = null;          // 当前简历数据对象
 let currentResumeMode = 'view';    // 'view' | 'edit'
 let aiConfigured = false;          // AI 是否已配置
+let currentResumeDraftMd = '';     // 稳定简历草稿源，模板切换不修改此变量
+let aiConversationHistory = [];    // AI 助手对话历史
 const RESUME_TEMPLATE_STORAGE_KEY = 'jobhunter_resume_template';
 const RESUME_TEMPLATE_OPTIONS = [
   { id: 'structured', label: '结构版' },
@@ -1476,11 +1479,6 @@ function loadResumeView() {
   if (!container) return;
 
   if (!resumeViewInitialized) {
-    // 预生成 Provider 下拉选项
-    const providerOptions = Object.entries(AI_PROVIDER_DEFAULTS).map(
-      ([key, val]) => `<option value="${key}">${val.label}</option>`
-    ).join('');
-
     container.innerHTML = `
       <div class="ws">
         <div class="ws-del">
@@ -1491,51 +1489,9 @@ function loadResumeView() {
           <h3 class="ws-res__title">简历预览</h3>
           <div id="resume-content"></div>
           <div class="upload-btn" id="btn-upload-inline" style="display:none">&#128196; 简历上传</div>
-          <div class="aicfg" id="wsAICfg">
-            <h4>AI 配置</h4>
-            <div class="aif">
-              <label>Provider</label>
-              <select class="aiinp" id="ws-ai-provider" style="cursor:pointer">
-                ${providerOptions}
-              </select>
-            </div>
-            <div class="aif">
-              <label>API Base URL</label>
-              <input class="aiinp" id="ws-ai-base-url" placeholder="https://open.bigmodel.cn/api/coding/paas/v4">
-            </div>
-            <div class="aif">
-              <label>API Key</label>
-              <input class="aiinp" type="password" id="ws-ai-api-key" placeholder="输入你的 API Key" autocomplete="off">
-            </div>
-            <div class="aif">
-              <label>模型名称</label>
-              <input class="aiinp" id="ws-ai-model" placeholder="glm-5">
-            </div>
-            <button class="res-btn" id="ws-ai-save-btn" style="margin-top:6px">保存配置</button>
-            <div class="deep-think-toggle" style="margin-top:12px">
-              <label class="dt-toggle-label">
-                <span>深度思考</span>
-                <input type="checkbox" id="ws-dt-toggle" class="dt-toggle-input">
-                <span class="dt-toggle-slider"></span>
-              </label>
-            </div>
-            <div class="secondary-model-section" id="ws-secondary-model">
-              <button class="secondary-model-section__toggle" id="ws-sec-model-toggle" type="button">▶ 第二模型配置</button>
-              <div class="secondary-model-section__body" id="ws-sec-model-body" style="display:none">
-                <div class="aif"><label>Provider</label><select class="aiinp" id="ws-sec-provider" style="cursor:pointer">${providerOptions}</select></div>
-                <div class="aif"><label>API Base URL</label><input class="aiinp" id="ws-sec-base-url" placeholder="https://api.openai.com/v1"></div>
-                <div class="aif"><label>API Key</label><input class="aiinp" type="password" id="ws-sec-api-key" placeholder="输入第二模型 API Key" autocomplete="off"></div>
-                <div class="aif"><label>模型名称</label><input class="aiinp" id="ws-sec-model" placeholder="gpt-4o"></div>
-                <button class="res-btn" id="ws-sec-save-btn" style="margin-top:6px">保存第二模型</button>
-              </div>
-            </div>
-          </div>
         </div>
       </div>
     `;
-
-    // 绑定内嵌 AI 配置面板事件
-    bindInlineAIConfigEvents();
 
     resumeViewInitialized = true;
   }
@@ -1543,7 +1499,6 @@ function loadResumeView() {
   loadResume();
   loadDeliveryList();
   checkAIConfigured();
-  loadInlineAIConfig();
 }
 
 /**
@@ -1571,6 +1526,7 @@ async function loadResume() {
     currentResumeMode = 'view';
 
     const contentMd = resume.content_md || '';
+    currentResumeDraftMd = contentMd;
     container.innerHTML = renderResumeDualMode(contentMd, 'default');
     bindResumeDualModeEvents(container, 'default');
     initializeResumePreviewShells(container);
@@ -1597,15 +1553,6 @@ function renderResumeDualMode(contentMd, viewMode = 'default') {
         <button class="res-btn res-btn--active" id="${idPrefix}-btn-view" data-mode="view" data-view="${viewMode}">查看</button>
         <button class="res-btn res-btn--g" id="${idPrefix}-btn-edit" data-mode="edit" data-view="${viewMode}">编辑</button>
         <button class="res-btn res-btn--g" id="${idPrefix}-btn-save" data-view="${viewMode}">保存</button>
-        <button class="res-btn res-btn--ai" id="${idPrefix}-btn-ai-optimize" data-view="${viewMode}"
-                ${!aiConfigured ? 'disabled title="请先配置 AI"' : ''}>
-          AI 优化简历
-        </button>
-        <button class="res-btn res-btn--dt" id="${idPrefix}-btn-deep-think" data-view="${viewMode}"
-                ${!aiConfigured ? 'disabled title="请先配置 AI"' : ''}>
-          深度思考
-        </button>
-        <button class="res-btn res-btn--g" id="${idPrefix}-btn-ai-cfg" data-view="${viewMode}">AI 配置</button>
         ${renderResumeTemplateSelector(viewMode)}
         <div class="export-dropdown" id="${idPrefix}-export-dropdown">
           <button class="res-btn res-btn--export btn-export" id="${idPrefix}-btn-export-resume"
@@ -1825,7 +1772,12 @@ function toggleResumeMode(mode, viewMode = 'default') {
     if (btnEdit) { btnEdit.classList.add('res-btn--active'); }
     initializeResumePreviewShells(editEl);
   } else {
-    const newMd = syncResumeEditorDraft(editEl) || (currentResume ? currentResume.content_md || '' : '');
+    // 切换到查看模式时，从 textarea 读取并更新 currentResumeDraftMd
+    const ta = editEl.querySelector('textarea');
+    if (ta && ta.value.trim()) {
+      currentResumeDraftMd = ta.value;
+    }
+    const newMd = currentResumeDraftMd || (currentResume ? currentResume.content_md || '' : '');
     viewEl.innerHTML = renderResumePreviewShell(newMd, currentResumeTemplate, { editable: false, viewMode });
     viewEl.style.display = 'block';
     editEl.style.display = 'none';
@@ -1853,11 +1805,14 @@ async function saveResumeContent(viewMode = 'default') {
     return;
   }
 
-  const contentMd = syncResumeEditorDraft(editEl) || ta.value;
+  const contentMd = ta.value || currentResumeDraftMd;
   if (!contentMd.trim()) {
     showToast('简历内容不能为空', 'error');
     return;
   }
+
+  // 更新稳定草稿源
+  currentResumeDraftMd = contentMd;
 
   const originalSaveLabel = saveBtn ? saveBtn.textContent : '';
 
@@ -3002,19 +2957,18 @@ async function exportResumeAsDocx(contentMd, fileName) {
  * @param {string} format 导出格式 (md/html/pdf/docx)
  */
 function getCurrentResumeDraft() {
-  const editors = ['def-resume-edit', 'exp-resume-edit', 'sp-resume-edit'];
+  // 如果处于编辑模式，先尝试从可见的 textarea 读取
+  const editors = ['sp-resume-edit', 'def-resume-edit', 'exp-resume-edit'];
   for (const editorId of editors) {
     const editor = document.getElementById(editorId);
-    if (!editor) continue;
-    const previewDraft = syncResumeEditorDraft(editor);
-    if (previewDraft.trim()) {
-      return previewDraft;
-    }
+    if (!editor || editor.style.display === 'none') continue;
     const textarea = editor.querySelector('textarea');
     if (textarea && textarea.value.trim()) {
       return textarea.value;
     }
   }
+  // 否则使用稳定草稿源
+  if (currentResumeDraftMd.trim()) return currentResumeDraftMd;
   return currentResume ? currentResume.content_md || '' : '';
 }
 
@@ -3095,24 +3049,16 @@ function bindResumeDualModeEvents(container, viewMode = 'default') {
   // 绑定导出下拉菜单事件
   bindExportDropdownEvents(container, viewMode);
 
-  // 绑定 AI 配置切换按钮
   const idPrefix = viewMode === 'default' ? 'def' : 'exp';
   const templateSelect = container.querySelector(`#${idPrefix}-resume-template`);
-  const aiCfgBtn = container.querySelector(`#${idPrefix}-btn-ai-cfg`);
-  if (aiCfgBtn) {
-    aiCfgBtn.addEventListener('click', () => {
-      const cfgPanel = document.getElementById('wsAICfg');
-      if (cfgPanel) cfgPanel.classList.toggle('on');
-    });
-  }
 
   if (templateSelect) {
     templateSelect.addEventListener('change', () => {
       persistResumeTemplate(templateSelect.value);
       const viewEl = document.getElementById(`${idPrefix}-resume-view`);
       const editEl = document.getElementById(`${idPrefix}-resume-edit`);
-      const ta = editEl ? editEl.querySelector('textarea') : null;
-      const contentMd = syncResumeEditorDraft(editEl) || (ta ? ta.value : (currentResume ? currentResume.content_md || '' : ''));
+      // 使用 currentResumeDraftMd 作为数据源（不从 DOM 反序列化）
+      const contentMd = currentResumeDraftMd || (currentResume ? currentResume.content_md || '' : '');
       if (viewEl) {
         viewEl.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: false, viewMode });
         initializeResumePreviewShells(viewEl);
@@ -3122,21 +3068,20 @@ function bindResumeDualModeEvents(container, viewMode = 'default') {
         editPreview.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: true, viewMode });
         initializeResumePreviewShells(editEl);
       }
+      // 同步分屏中心面板的模板选择器
       const splitSelect = document.getElementById('sp-resume-template');
       if (splitSelect) {
         splitSelect.value = currentResumeTemplate;
       }
       const splitView = document.getElementById('sp-resume-view');
       const splitEdit = document.getElementById('sp-resume-edit');
-      const splitTa = splitEdit ? splitEdit.querySelector('textarea') : null;
-      const splitContentMd = syncResumeEditorDraft(splitEdit) || (splitTa ? splitTa.value : contentMd);
       if (splitView) {
-        splitView.innerHTML = renderResumePreviewShell(splitContentMd, currentResumeTemplate, { editable: false, viewMode: 'split' });
+        splitView.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: false, viewMode: 'split' });
         initializeResumePreviewShells(splitView);
       }
       const splitEditPreview = splitEdit ? splitEdit.querySelector('.resume-edit-dual__preview') : null;
       if (splitEditPreview) {
-        splitEditPreview.innerHTML = renderResumePreviewShell(splitContentMd, currentResumeTemplate, { editable: true, viewMode: 'split' });
+        splitEditPreview.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: true, viewMode: 'split' });
         initializeResumePreviewShells(splitEdit);
       }
     });
@@ -3157,10 +3102,6 @@ function bindResumeDualModeEvents(container, viewMode = 'default') {
       toggleResumeMode(mode, view);
     } else if (btn.id.includes('btn-save')) {
       saveResumeContent(view);
-    } else if (btn.id.includes('btn-ai-optimize')) {
-      await handleAIOptimize(btn, view);
-    } else if (btn.id.includes('btn-deep-think')) {
-      await handleDeepThink(btn, view);
     }
   });
 }
@@ -3378,8 +3319,10 @@ async function openSplitView(jobId) {
 
   // 加载左栏岗位详情
   await loadSplitLeft(jobId);
-  // 加载右栏简历
-  loadSplitRight();
+  // 加载中栏简历
+  loadSplitCenterResume();
+  // 加载右栏 AI 助手
+  loadSplitRightAssistant(jobId);
 }
 
 /**
@@ -3452,27 +3395,17 @@ async function loadSplitLeft(jobId) {
 }
 
 /**
- * 加载分屏右栏：简历编辑 + AI 功能 + 下载栏
+ * 加载分屏中栏：简历编辑（不含 AI 功能）
  */
-function loadSplitRight() {
-  const container = document.getElementById('splitRight');
+function loadSplitCenterResume() {
+  const container = document.getElementById('splitCenter');
   if (!container) return;
 
-  const providerOptions = Object.entries(AI_PROVIDER_DEFAULTS).map(
-    ([key, val]) => `<option value="${key}">${val.label}</option>`
-  ).join('');
-
   container.innerHTML = `
-    <h3>简历内容</h3>
     <div class="res-bar" id="splitResBar">
       <button class="res-btn res-btn--active" id="sp-btn-view" data-mode="view">查看</button>
       <button class="res-btn res-btn--g" id="sp-btn-edit" data-mode="edit">编辑</button>
       <button class="res-btn res-btn--g" id="sp-btn-save">保存</button>
-      <button class="res-btn res-btn--ai" id="sp-btn-ai-optimize"
-              ${!aiConfigured ? 'disabled title="请先配置 AI"' : ''}>AI 优化</button>
-      <button class="res-btn res-btn--dt" id="sp-btn-deep-think"
-              ${!aiConfigured ? 'disabled title="请先配置 AI"' : ''}>深度思考</button>
-      <button class="res-btn res-btn--g" id="sp-btn-ai-cfg">AI 配置</button>
       <label class="resume-template-switch" for="sp-resume-template">
         <span>模板</span>
         <select class="resume-template-switch__select" id="sp-resume-template">
@@ -3481,56 +3414,31 @@ function loadSplitRight() {
           `).join('')}
         </select>
       </label>
-    </div>
-    <div id="sp-resume-view" class="resume-dual-mode__view"></div>
-    <div id="sp-resume-edit" class="resume-dual-mode__edit" style="display:none"></div>
-    <div class="dl-bar" id="sp-dl-bar">
-      <span style="font-size:10px;font-weight:700;text-transform:uppercase;color:#8E8E8E;letter-spacing:.5px">下载格式：</span>
-      <select class="dl-sel" id="sp-dl-format">
-        <option value="md">.md (Markdown)</option>
-        <option value="html">.html (HTML)</option>
-        <option value="pdf">.pdf (PDF)</option>
-        <option value="docx">.docx (Word)</option>
-      </select>
-      <button class="dl-btn" id="sp-dl-btn">下载简历</button>
-    </div>
-    <div class="aicfg" id="spAICfg">
-      <h4>AI 配置</h4>
-      <div class="aif"><label>Provider</label><select class="aiinp" id="sp-ai-provider">${providerOptions}</select></div>
-      <div class="aif"><label>API Base URL</label><input class="aiinp" id="sp-ai-base-url" placeholder="https://open.bigmodel.cn/api/coding/paas/v4"></div>
-      <div class="aif"><label>API Key</label><input class="aiinp" type="password" id="sp-ai-api-key" placeholder="输入你的 API Key" autocomplete="off"></div>
-      <div class="aif"><label>模型名称</label><input class="aiinp" id="sp-ai-model" placeholder="glm-5"></div>
-      <button class="res-btn" id="sp-ai-save-btn" style="margin-top:6px">保存配置</button>
-      <div class="deep-think-toggle" style="margin-top:12px">
-        <label class="dt-toggle-label">
-          <span>深度思考</span>
-          <input type="checkbox" id="sp-dt-toggle" class="dt-toggle-input">
-          <span class="dt-toggle-slider"></span>
-        </label>
-      </div>
-      <div class="secondary-model-section" id="sp-secondary-model">
-        <button class="secondary-model-section__toggle" id="sp-sec-model-toggle" type="button">▶ 第二模型配置</button>
-        <div class="secondary-model-section__body" id="sp-sec-model-body" style="display:none">
-          <div class="aif"><label>Provider</label><select class="aiinp" id="sp-sec-provider" style="cursor:pointer">${providerOptions}</select></div>
-          <div class="aif"><label>API Base URL</label><input class="aiinp" id="sp-sec-base-url" placeholder="https://api.openai.com/v1"></div>
-          <div class="aif"><label>API Key</label><input class="aiinp" type="password" id="sp-sec-api-key" placeholder="输入第二模型 API Key" autocomplete="off"></div>
-          <div class="aif"><label>模型名称</label><input class="aiinp" id="sp-sec-model" placeholder="gpt-4o"></div>
-          <button class="res-btn" id="sp-sec-save-btn" style="margin-top:6px">保存第二模型</button>
+      <div class="export-dropdown" id="sp-export-dropdown">
+        <button class="res-btn res-btn--export btn-export" id="sp-btn-export-resume"
+                ${!currentResume ? 'disabled title="请先上传简历"' : ''}>
+          下载简历
+        </button>
+        <div class="export-menu" id="sp-export-menu">
+          <button data-format="md">Markdown (.md)</button>
+          <button data-format="html">HTML (.html)</button>
+          <button data-format="pdf">PDF (.pdf)</button>
+          <button data-format="docx">Word (.docx)</button>
         </div>
       </div>
     </div>
+    <div id="sp-resume-view" class="resume-dual-mode__view"></div>
+    <div id="sp-resume-edit" class="resume-dual-mode__edit" style="display:none"></div>
   `;
 
   // 加载简历内容
   loadSplitResume();
-  // 绑定事件
-  bindSplitEvents();
-  // 回显 AI 配置到分屏面板
-  loadSplitAIConfig();
+  // 绑定中栏事件
+  bindSplitCenterEvents();
 }
 
 /**
- * 加载分屏右栏的简历数据
+ * 加载分屏中栏的简历数据
  */
 async function loadSplitResume() {
   const viewEl = document.getElementById('sp-resume-view');
@@ -3552,10 +3460,11 @@ async function loadSplitResume() {
     // 同步全局简历数据
     currentResume = resume;
     const contentMd = resume.content_md || '';
+    currentResumeDraftMd = contentMd;
 
     // 查看模式渲染
     viewEl.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: false, viewMode: 'split' });
-    // 编辑模式填充（双栏：上下布局，适应分屏窄宽度）
+    // 编辑模式填充
     editEl.innerHTML = renderResumeEdit(contentMd, 'split');
     initializeResumePreviewShells(viewEl);
     initializeResumePreviewShells(editEl);
@@ -3565,19 +3474,13 @@ async function loadSplitResume() {
 }
 
 /**
- * 绑定分屏右栏的所有事件
+ * 绑定分屏中栏的所有事件
  */
-function bindSplitEvents() {
+function bindSplitCenterEvents() {
   const viewBtn = document.getElementById('sp-btn-view');
   const editBtn = document.getElementById('sp-btn-edit');
   const saveBtn = document.getElementById('sp-btn-save');
-  const aiOptBtn = document.getElementById('sp-btn-ai-optimize');
-  const aiCfgBtn = document.getElementById('sp-btn-ai-cfg');
-  const dlBtn = document.getElementById('sp-dl-btn');
-  const dlFormat = document.getElementById('sp-dl-format');
   const templateSelect = document.getElementById('sp-resume-template');
-  const aiSaveBtn = document.getElementById('sp-ai-save-btn');
-  const spProvider = document.getElementById('sp-ai-provider');
 
   // 查看 / 编辑模式切换
   if (viewBtn && editBtn) {
@@ -3586,7 +3489,12 @@ function bindSplitEvents() {
       const editEl = document.getElementById('sp-resume-edit');
       if (!viewEl || !editEl) return;
 
-      const newMd = syncResumeEditorDraft(editEl) || (currentResume ? currentResume.content_md || '' : '');
+      // 从 textarea 读取并更新 currentResumeDraftMd
+      const ta = editEl.querySelector('textarea');
+      if (ta && ta.value.trim()) {
+        currentResumeDraftMd = ta.value;
+      }
+      const newMd = currentResumeDraftMd || (currentResume ? currentResume.content_md || '' : '');
       viewEl.innerHTML = renderResumePreviewShell(newMd, currentResumeTemplate, { editable: false, viewMode: 'split' });
 
       viewEl.style.display = '';
@@ -3616,8 +3524,10 @@ function bindSplitEvents() {
       const ta = editEl ? editEl.querySelector('textarea') : null;
       if (!ta) { showToast('未找到编辑区域', 'error'); return; }
 
-      const contentMd = syncResumeEditorDraft(editEl) || ta.value;
+      const contentMd = ta.value || currentResumeDraftMd;
       if (!contentMd.trim()) { showToast('简历内容不能为空', 'error'); return; }
+
+      currentResumeDraftMd = contentMd;
 
       try {
         await updateResumeContent(contentMd);
@@ -3644,111 +3554,7 @@ function bindSplitEvents() {
     });
   }
 
-  // AI 优化按钮（围绕 currentSplitJobId 对应的岗位）
-  if (aiOptBtn) {
-    aiOptBtn.addEventListener('click', async () => {
-      if (!aiConfigured) { showToast('请先配置 AI', 'error'); return; }
-      if (!currentResume) { showToast('请先上传简历', 'error'); return; }
-
-      aiOptBtn.disabled = true;
-      const originalText = aiOptBtn.textContent;
-      aiOptBtn.textContent = '优化中...';
-
-      try {
-        const targetJobId = currentSplitJobId;
-        if (!targetJobId) {
-          showToast('未选择目标岗位', 'error');
-          return;
-        }
-
-        const data = await optimizeResume(targetJobId, '');
-        const optimizedContent = data.optimized_content_md || data.content_md || data.content || data.optimized_resume;
-
-        if (optimizedContent) {
-          const editEl = document.getElementById('sp-resume-edit');
-          const ta = editEl ? editEl.querySelector('textarea') : null;
-          const previewEl = editEl ? editEl.querySelector('.resume-edit-dual__preview') : null;
-          if (ta) {
-            ta.value = optimizedContent;
-          }
-          if (previewEl) {
-            previewEl.innerHTML = renderResumePreviewShell(optimizedContent, currentResumeTemplate, { editable: true, viewMode: 'split' });
-            initializeResumePreviewShells(editEl);
-          }
-          if (currentResume) currentResume.content_md = optimizedContent;
-
-          // 切换到编辑模式
-          const viewEl = document.getElementById('sp-resume-view');
-          if (viewEl) viewEl.style.display = 'none';
-          if (editEl) editEl.style.display = '';
-          if (editBtn) editBtn.classList.add('res-btn--active');
-          if (viewBtn) viewBtn.classList.remove('res-btn--active');
-
-          showToast('AI 优化完成，请查看编辑器内容', 'success');
-        } else {
-          showToast('AI 返回结果为空', 'error');
-        }
-      } catch (err) {
-        showToast('AI 优化失败: ' + err.message, 'error');
-      } finally {
-        aiOptBtn.textContent = originalText;
-        aiOptBtn.disabled = !aiConfigured;
-      }
-    });
-  }
-
-  // AI 配置切换按钮
-  if (aiCfgBtn) {
-    aiCfgBtn.addEventListener('click', () => {
-      const cfgPanel = document.getElementById('spAICfg');
-      if (cfgPanel) cfgPanel.classList.toggle('on');
-    });
-  }
-
-  // 深度思考按钮（分屏）
-  const spDtBtn = document.getElementById('sp-btn-deep-think');
-  if (spDtBtn) {
-    spDtBtn.addEventListener('click', async () => {
-      if (!aiConfigured) { showToast('请先配置 AI', 'error'); return; }
-      const targetJobId = currentSplitJobId;
-      if (!targetJobId) { showToast('未选择目标岗位', 'error'); return; }
-      await handleDeepThink(spDtBtn, 'split');
-    });
-  }
-
-  // 深度思考开关（分屏）
-  const spDtToggle = document.getElementById('sp-dt-toggle');
-  if (spDtToggle) {
-    spDtToggle.addEventListener('change', async () => {
-      try {
-        await saveDeepThinkConfig({ enabled: spDtToggle.checked });
-        showToast(spDtToggle.checked ? '深度思考已开启' : '深度思考已关闭', 'success');
-        const wsDtToggle = document.getElementById('ws-dt-toggle');
-        if (wsDtToggle) wsDtToggle.checked = spDtToggle.checked;
-      } catch (err) {
-        showToast('保存深度思考配置失败: ' + err.message, 'error');
-        spDtToggle.checked = !spDtToggle.checked;
-      }
-    });
-  }
-
-  // 第二模型折叠 + 保存（分屏）
-  const spSecToggle = document.getElementById('sp-sec-model-toggle');
-  const spSecBody = document.getElementById('sp-sec-model-body');
-  if (spSecToggle && spSecBody) {
-    spSecToggle.addEventListener('click', () => {
-      const open = spSecBody.style.display !== 'none';
-      spSecBody.style.display = open ? 'none' : '';
-      spSecToggle.textContent = (open ? '▶' : '▼') + ' 第二模型配置';
-    });
-  }
-  const spSecSaveBtn = document.getElementById('sp-sec-save-btn');
-  if (spSecSaveBtn) {
-    spSecSaveBtn.addEventListener('click', async () => {
-      await handleSecondaryModelSave('sp');
-    });
-  }
-
+  // 模板切换
   if (templateSelect) {
     templateSelect.addEventListener('change', () => {
       persistResumeTemplate(templateSelect.value);
@@ -3756,10 +3562,10 @@ function bindSplitEvents() {
       if (defaultSelect) {
         defaultSelect.value = currentResumeTemplate;
       }
+      // 使用 currentResumeDraftMd 作为数据源
+      const contentMd = currentResumeDraftMd || (currentResume ? currentResume.content_md || '' : '');
       const viewEl = document.getElementById('sp-resume-view');
       const editEl = document.getElementById('sp-resume-edit');
-      const ta = editEl ? editEl.querySelector('textarea') : null;
-      const contentMd = syncResumeEditorDraft(editEl) || (ta ? ta.value : (currentResume ? currentResume.content_md || '' : ''));
       if (viewEl) {
         viewEl.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: false, viewMode: 'split' });
         initializeResumePreviewShells(viewEl);
@@ -3769,31 +3575,302 @@ function bindSplitEvents() {
         editPreview.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: true, viewMode: 'split' });
         initializeResumePreviewShells(editEl);
       }
+      // 也同步主视图
       const mainView = document.getElementById('def-resume-view');
       const mainEdit = document.getElementById('def-resume-edit');
-      const mainTa = mainEdit ? mainEdit.querySelector('textarea') : null;
-      const mainContentMd = syncResumeEditorDraft(mainEdit) || (mainTa ? mainTa.value : contentMd);
       if (mainView) {
-        mainView.innerHTML = renderResumePreviewShell(mainContentMd, currentResumeTemplate, { editable: false, viewMode: 'default' });
+        mainView.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: false, viewMode: 'default' });
         initializeResumePreviewShells(mainView);
       }
       const mainEditPreview = mainEdit ? mainEdit.querySelector('.resume-edit-dual__preview') : null;
       if (mainEditPreview) {
-        mainEditPreview.innerHTML = renderResumePreviewShell(mainContentMd, currentResumeTemplate, { editable: true, viewMode: 'default' });
+        mainEditPreview.innerHTML = renderResumePreviewShell(contentMd, currentResumeTemplate, { editable: true, viewMode: 'default' });
         initializeResumePreviewShells(mainEdit);
       }
     });
   }
 
-  // 下载按钮（WP4：内嵌 .dl-bar）
-  if (dlBtn && dlFormat) {
-    dlBtn.addEventListener('click', () => {
-      const format = dlFormat.value;
+  // 导出下拉菜单
+  const exportDropdown = document.getElementById('sp-export-dropdown');
+  const exportBtn = document.getElementById('sp-btn-export-resume');
+  const exportMenu = document.getElementById('sp-export-menu');
+  if (exportDropdown && exportBtn && exportMenu) {
+    exportBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.querySelectorAll('.export-menu.is-visible').forEach(menu => {
+        if (menu !== exportMenu) menu.classList.remove('is-visible');
+      });
+      exportMenu.classList.toggle('is-visible');
+    });
+    exportMenu.addEventListener('click', (e) => {
+      const item = e.target.closest('.export-menu button[data-format]');
+      if (!item) return;
+      e.stopPropagation();
+      const format = item.dataset.format;
+      exportMenu.classList.remove('is-visible');
       dispatchExport(format);
     });
   }
+}
 
-  // AI 配置 Provider 切换
+/**
+ * 加载分屏右栏：AI 助手面板
+ * @param {number} jobId 目标岗位 ID
+ */
+function loadSplitRightAssistant(jobId) {
+  const container = document.getElementById('splitRight');
+  if (!container) return;
+
+  const providerOptions = Object.entries(AI_PROVIDER_DEFAULTS).map(
+    ([key, val]) => `<option value="${key}">${val.label}</option>`
+  ).join('');
+
+  container.innerHTML = `
+    <div class="ai-panel-header">
+      <div class="ai-panel-title">AI 助手</div>
+      <div class="ai-panel-actions">
+        <button class="ai-panel-btn" id="btn-ai-settings">⚙️ 设置</button>
+        <button class="ai-panel-btn" id="btn-clear-chat">清空</button>
+      </div>
+    </div>
+    <div class="ai-settings-panel" id="aiSettingsPanel" style="display: none;">
+      <div class="ai-settings-header">
+        <span>AI 配置</span>
+        <button class="ai-settings-close" id="btn-close-settings">✕</button>
+      </div>
+      <div class="ai-settings-content">
+        <div class="ai-setting-item">
+          <label class="ai-setting-label">Provider</label>
+          <select class="ai-setting-select" id="sp-ai-provider">
+            ${providerOptions}
+          </select>
+        </div>
+        <div class="ai-setting-item">
+          <label class="ai-setting-label">API Base URL</label>
+          <input type="text" class="ai-setting-input" id="sp-ai-base-url" placeholder="https://open.bigmodel.cn/api/coding/paas/v4">
+        </div>
+        <div class="ai-setting-item">
+          <label class="ai-setting-label">API Key</label>
+          <input type="password" class="ai-setting-input" id="sp-ai-api-key" placeholder="输入你的 API Key" autocomplete="off">
+        </div>
+        <div class="ai-setting-item">
+          <label class="ai-setting-label">模型名称</label>
+          <input type="text" class="ai-setting-input" id="sp-ai-model" placeholder="glm-5">
+        </div>
+        <button class="ai-setting-save" id="sp-ai-save-btn">保存配置</button>
+        <div class="ai-deep-think-toggle" style="margin-top:12px">
+          <label class="ai-dt-toggle-label">
+            <span>深度思考</span>
+            <input type="checkbox" id="sp-dt-toggle" class="ai-dt-toggle-input">
+            <span class="ai-dt-toggle-slider"></span>
+          </label>
+        </div>
+        <div class="ai-secondary-model-section" id="sp-secondary-model">
+          <button class="ai-secondary-model-toggle" id="sp-sec-model-toggle" type="button">▶ 第二模型配置</button>
+          <div class="ai-secondary-model-body" id="sp-sec-model-body" style="display:none">
+            <div class="ai-setting-item"><label class="ai-setting-label">Provider</label><select class="ai-setting-select" id="sp-sec-provider">${providerOptions}</select></div>
+            <div class="ai-setting-item"><label class="ai-setting-label">API Base URL</label><input class="ai-setting-input" id="sp-sec-base-url" placeholder="https://api.openai.com/v1"></div>
+            <div class="ai-setting-item"><label class="ai-setting-label">API Key</label><input class="ai-setting-input" type="password" id="sp-sec-api-key" placeholder="输入第二模型 API Key" autocomplete="off"></div>
+            <div class="ai-setting-item"><label class="ai-setting-label">模型名称</label><input class="ai-setting-input" id="sp-sec-model" placeholder="gpt-4o"></div>
+            <button class="ai-setting-save" id="sp-sec-save-btn">保存第二模型</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="ai-chat-container">
+      <div class="ai-messages" id="aiMessages">
+        <div class="message ai">
+          <div class="message-avatar">🤖</div>
+          <div style="flex: 1;">
+            <div class="message-content">
+              <div class="message-sender">AI 助手</div>
+              <div class="structured-content">
+                你好！我是你的简历优化助手。<br>
+                你可以发送消息让我帮你优化简历、分析岗位匹配度，或者直接提问。
+              </div>
+            </div>
+            <div class="message-time">${getAIChatTime()}</div>
+          </div>
+        </div>
+        <div class="typing-indicator" id="typingIndicator" style="display: none;">
+          <span></span><span></span><span></span>
+        </div>
+      </div>
+      <div class="ai-input-minimal">
+        <label class="upload-minimal-btn" title="上传图片或文件">
+          +
+          <input type="file" id="aiFileUpload" accept="image/*,.pdf,.doc,.docx,.txt,.md" multiple>
+        </label>
+        <input type="text" class="ai-input-field" id="aiInput" placeholder="输入消息...">
+        <button class="send-minimal-btn" id="sendBtn">➤</button>
+      </div>
+    </div>
+  `;
+
+  // 绑定 AI 助手事件
+  bindSplitRightAssistantEvents(jobId);
+  // 加载 AI 配置
+  loadSplitAIConfig();
+}
+
+function getAIChatTime() {
+  const now = new Date();
+  return `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+}
+
+function addAIUserMessage(text) {
+  const aiMessages = document.getElementById('aiMessages');
+  const typingIndicator = document.getElementById('typingIndicator');
+  if (!aiMessages) return;
+
+  const messageDiv = document.createElement('div');
+  messageDiv.className = 'message user';
+  messageDiv.innerHTML = `
+    <div class="message-avatar">👤</div>
+    <div style="flex: 1;">
+      <div class="message-content">
+        <div class="message-sender">你</div>
+        ${escapeHtml(text)}
+      </div>
+      <div class="message-time">${getAIChatTime()}</div>
+    </div>
+  `;
+
+  if (typingIndicator) {
+    aiMessages.insertBefore(messageDiv, typingIndicator);
+  } else {
+    aiMessages.appendChild(messageDiv);
+  }
+  aiMessages.scrollTop = aiMessages.scrollHeight;
+}
+
+function addAIResponseMessage(text, sender = 'AI 助手') {
+  const aiMessages = document.getElementById('aiMessages');
+  const typingIndicator = document.getElementById('typingIndicator');
+  if (!aiMessages) return;
+
+  const messageDiv = document.createElement('div');
+  messageDiv.className = 'message ai';
+  messageDiv.innerHTML = `
+    <div class="message-avatar">🤖</div>
+    <div style="flex: 1;">
+      <div class="message-content">
+        <div class="message-sender">${escapeHtml(sender)}</div>
+        <div class="structured-content">${text.replace(/\n/g, '<br>')}</div>
+      </div>
+      <div class="message-time">${getAIChatTime()}</div>
+    </div>
+  `;
+
+  if (typingIndicator) {
+    aiMessages.insertBefore(messageDiv, typingIndicator);
+  } else {
+    aiMessages.appendChild(messageDiv);
+  }
+  aiMessages.scrollTop = aiMessages.scrollHeight;
+}
+
+function showAITyping() {
+  const indicator = document.getElementById('typingIndicator');
+  const aiMessages = document.getElementById('aiMessages');
+  if (indicator) indicator.style.display = 'flex';
+  if (aiMessages) aiMessages.scrollTop = aiMessages.scrollHeight;
+}
+
+function hideAITyping() {
+  const indicator = document.getElementById('typingIndicator');
+  if (indicator) indicator.style.display = 'none';
+}
+
+/**
+ * 绑定 AI 助手面板的所有事件
+ * @param {number} jobId 目标岗位 ID
+ */
+function bindSplitRightAssistantEvents(jobId) {
+  const aiInput = document.getElementById('aiInput');
+  const sendBtn = document.getElementById('sendBtn');
+  const settingsBtn = document.getElementById('btn-ai-settings');
+  const closeSettingsBtn = document.getElementById('btn-close-settings');
+  const clearChatBtn = document.getElementById('btn-clear-chat');
+  const settingsPanel = document.getElementById('aiSettingsPanel');
+  const aiSaveBtn = document.getElementById('sp-ai-save-btn');
+  const spProvider = document.getElementById('sp-ai-provider');
+
+  // 发送消息
+  async function sendAIMessage() {
+    if (!aiInput) return;
+    const text = aiInput.value.trim();
+    if (!text) return;
+
+    addAIUserMessage(text);
+    aiInput.value = '';
+    aiConversationHistory.push({ role: 'user', text });
+
+    showAITyping();
+    if (sendBtn) sendBtn.disabled = true;
+
+    try {
+      const data = await chatWithAIAssistant(jobId, text, aiConversationHistory);
+      hideAITyping();
+      const reply = data.reply || data.message || data.response || '（无回复）';
+      addAIResponseMessage(reply);
+      aiConversationHistory.push({ role: 'assistant', text: reply });
+    } catch (err) {
+      hideAITyping();
+      addAIResponseMessage('请求失败: ' + err.message, '系统');
+    } finally {
+      if (sendBtn) sendBtn.disabled = false;
+    }
+  }
+
+  if (sendBtn) sendBtn.addEventListener('click', sendAIMessage);
+  if (aiInput) {
+    aiInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        sendAIMessage();
+      }
+    });
+  }
+
+  // 设置面板切换
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      if (settingsPanel) settingsPanel.style.display = settingsPanel.style.display === 'none' ? 'block' : 'none';
+    });
+  }
+  if (closeSettingsBtn) {
+    closeSettingsBtn.addEventListener('click', () => {
+      if (settingsPanel) settingsPanel.style.display = 'none';
+    });
+  }
+
+  // 清空对话
+  if (clearChatBtn) {
+    clearChatBtn.addEventListener('click', () => {
+      aiConversationHistory = [];
+      const aiMessages = document.getElementById('aiMessages');
+      if (aiMessages) {
+        aiMessages.innerHTML = `
+          <div class="message ai">
+            <div class="message-avatar">🤖</div>
+            <div style="flex: 1;">
+              <div class="message-content">
+                <div class="message-sender">AI 助手</div>
+                <div class="structured-content">对话已清空。有什么可以帮你的吗？</div>
+              </div>
+              <div class="message-time">${getAIChatTime()}</div>
+            </div>
+          </div>
+          <div class="typing-indicator" id="typingIndicator" style="display: none;">
+            <span></span><span></span><span></span>
+          </div>
+        `;
+      }
+    });
+  }
+
+  // AI Provider 切换
   if (spProvider) {
     spProvider.addEventListener('change', () => {
       const provider = spProvider.value;
@@ -3825,7 +3902,6 @@ function bindSplitEvents() {
         await saveAIConfig({ provider, api_key: apiKey, base_url: baseUrl, model_name: model });
         showToast('AI 配置已保存', 'success');
         aiConfigured = true;
-        // 同步到工作台内嵌面板
         loadInlineAIConfig();
       } catch (err) {
         showToast('保存 AI 配置失败: ' + err.message, 'error');
@@ -3835,10 +3911,53 @@ function bindSplitEvents() {
       }
     });
   }
+
+  // 深度思考开关
+  const spDtToggle = document.getElementById('sp-dt-toggle');
+  if (spDtToggle) {
+    spDtToggle.addEventListener('change', async () => {
+      try {
+        await saveDeepThinkConfig({ enabled: spDtToggle.checked });
+        showToast(spDtToggle.checked ? '深度思考已开启' : '深度思考已关闭', 'success');
+        const wsDtToggle = document.getElementById('ws-dt-toggle');
+        if (wsDtToggle) wsDtToggle.checked = spDtToggle.checked;
+      } catch (err) {
+        showToast('保存深度思考配置失败: ' + err.message, 'error');
+        spDtToggle.checked = !spDtToggle.checked;
+      }
+    });
+  }
+
+  // 第二模型折叠 + 保存
+  const spSecToggle = document.getElementById('sp-sec-model-toggle');
+  const spSecBody = document.getElementById('sp-sec-model-body');
+  if (spSecToggle && spSecBody) {
+    spSecToggle.addEventListener('click', () => {
+      const open = spSecBody.style.display !== 'none';
+      spSecBody.style.display = open ? 'none' : '';
+      spSecToggle.textContent = (open ? '▶' : '▼') + ' 第二模型配置';
+    });
+  }
+  const spSecSaveBtn = document.getElementById('sp-sec-save-btn');
+  if (spSecSaveBtn) {
+    spSecSaveBtn.addEventListener('click', async () => {
+      await handleSecondaryModelSave('sp');
+    });
+  }
+
+  // 文件上传（静默处理）
+  const fileUpload = document.getElementById('aiFileUpload');
+  if (fileUpload) {
+    fileUpload.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        showToast(`已选择 ${e.target.files.length} 个文件`, 'info');
+      }
+    });
+  }
 }
 
 /**
- * 从后端加载 AI 配置到分屏面板
+ * 从后端加载 AI 配置到 AI 助手面板
  */
 async function loadSplitAIConfig() {
   try {
