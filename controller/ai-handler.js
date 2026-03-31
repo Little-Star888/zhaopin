@@ -1590,6 +1590,56 @@ function handleKeywordScore(req, res) {
   });
 }
 
+/**
+ * GET /api/ai/capabilities — 返回当前 AI 能力状态
+ */
+function handleGetCapabilities(req, res) {
+  try {
+    const db = getDatabase();
+    const activeConfig = db.prepare('SELECT * FROM ai_configs WHERE is_active = 1').get();
+    const dtSettings = getDeepThinkSettings();
+    const secondaryModel = getSecondaryModelConfig();
+
+    const capabilities = {
+      assistant_chat: !!activeConfig,
+      deep_think: !!(activeConfig && dtSettings && dtSettings.enabled),
+      deep_think_modes: ['single', 'dual', 'auto'],
+      secondary_model_ready: !!(secondaryModel && secondaryModel.api_key_encrypted && secondaryModel.model_name),
+      trace_supported: true,
+      resume_script_editor: true,
+      version: new Date().toISOString().split('T')[0]
+    };
+
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(capabilities));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
+/**
+ * GET /api/ai/deep-think/config — 返回深度思考配置
+ */
+function handleGetDeepThinkConfig(req, res) {
+  try {
+    const settings = getDeepThinkSettings();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(settings || {
+      enabled: false,
+      mode: 'auto',
+      max_rounds: 10,
+      compression_enabled: true,
+      debug: false,
+      no_new_info_rounds: 3,
+      fallback_to_single: true
+    }));
+  } catch (err) {
+    res.writeHead(500, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: err.message }));
+  }
+}
+
 module.exports = {
   handleGetConfig,
   handleSaveConfig,
@@ -1600,5 +1650,7 @@ module.exports = {
   handleSaveDeepThinkConfig,
   handleSaveSecondaryModel,
   handleDeleteSecondaryModel,
-  handleKeywordScore
+  handleKeywordScore,
+  handleGetCapabilities,
+  handleGetDeepThinkConfig
 };

@@ -309,6 +309,16 @@ export async function deepThink(task, jobId) {
   });
 }
 
+/** 获取 AI 能力状态 */
+export async function getAICapabilities() {
+  return request('/api/ai/capabilities');
+}
+
+/** 获取深度思考配置 */
+export async function getDeepThinkConfig() {
+  return request('/api/ai/deep-think/config');
+}
+
 /**
  * 保存深度思考配置（开关）
  * @param {{ enabled: boolean }} config

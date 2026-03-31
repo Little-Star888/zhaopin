@@ -10,6 +10,7 @@ import {
   optimizeResume, matchJobs, exportPDFViaAPI, clearAllJobs,
   deepThink, saveDeepThinkConfig, saveSecondaryModel,
   chatWithAIAssistant,
+  getAICapabilities, getDeepThinkConfig,
 } from './dashboard-api.js';
 
 /* ==================== Toast ==================== */
@@ -3744,83 +3745,87 @@ function loadSplitRightAssistant(jobId) {
   ).join('');
 
   container.innerHTML = `
-    <div class="ai-panel-header">
-      <div class="ai-panel-title">AI 助手</div>
-      <div class="ai-panel-actions">
-        <button class="ai-panel-btn" id="btn-ai-settings">⚙️ 设置</button>
-        <button class="ai-panel-btn" id="btn-clear-chat">清空</button>
+    <div class="ai-panel-shell">
+      <div class="ai-panel-header">
+        <div class="ai-panel-title">AI 助手</div>
+        <div class="ai-panel-actions">
+          <button class="ai-panel-btn" id="btn-ai-settings">⚙️ 设置</button>
+          <button class="ai-panel-btn" id="btn-clear-chat">清空</button>
+        </div>
       </div>
-    </div>
-    <div class="ai-settings-panel" id="aiSettingsPanel" style="display: none;">
-      <div class="ai-settings-header">
-        <span>AI 配置</span>
-        <button class="ai-settings-close" id="btn-close-settings">✕</button>
-      </div>
-      <div class="ai-settings-content">
-        <div class="ai-setting-item">
-          <label class="ai-setting-label">Provider</label>
-          <select class="ai-setting-select" id="sp-ai-provider">
-            ${providerOptions}
-          </select>
-        </div>
-        <div class="ai-setting-item">
-          <label class="ai-setting-label">API Base URL</label>
-          <input type="text" class="ai-setting-input" id="sp-ai-base-url" placeholder="https://open.bigmodel.cn/api/coding/paas/v4">
-        </div>
-        <div class="ai-setting-item">
-          <label class="ai-setting-label">API Key</label>
-          <input type="password" class="ai-setting-input" id="sp-ai-api-key" placeholder="输入你的 API Key" autocomplete="off">
-        </div>
-        <div class="ai-setting-item">
-          <label class="ai-setting-label">模型名称</label>
-          <input type="text" class="ai-setting-input" id="sp-ai-model" placeholder="glm-5">
-        </div>
-        <button class="ai-setting-save" id="sp-ai-save-btn">保存配置</button>
-        <div class="ai-deep-think-toggle" style="margin-top:12px">
-          <label class="ai-dt-toggle-label">
-            <span>深度思考</span>
-            <input type="checkbox" id="sp-dt-toggle" class="ai-dt-toggle-input">
-            <span class="ai-dt-toggle-slider"></span>
-          </label>
-        </div>
-        <div class="ai-secondary-model-section" id="sp-secondary-model">
-          <button class="ai-secondary-model-toggle" id="sp-sec-model-toggle" type="button">▶ 第二模型配置</button>
-          <div class="ai-secondary-model-body" id="sp-sec-model-body" style="display:none">
-            <div class="ai-setting-item"><label class="ai-setting-label">Provider</label><select class="ai-setting-select" id="sp-sec-provider">${providerOptions}</select></div>
-            <div class="ai-setting-item"><label class="ai-setting-label">API Base URL</label><input class="ai-setting-input" id="sp-sec-base-url" placeholder="https://api.openai.com/v1"></div>
-            <div class="ai-setting-item"><label class="ai-setting-label">API Key</label><input class="ai-setting-input" type="password" id="sp-sec-api-key" placeholder="输入第二模型 API Key" autocomplete="off"></div>
-            <div class="ai-setting-item"><label class="ai-setting-label">模型名称</label><input class="ai-setting-input" id="sp-sec-model" placeholder="gpt-4o"></div>
-            <button class="ai-setting-save" id="sp-sec-save-btn">保存第二模型</button>
+      <div class="ai-panel-overlay-zone">
+        <div class="ai-settings-panel" id="aiSettingsPanel">
+          <div class="ai-settings-header">
+            <span>AI 配置</span>
+            <button class="ai-settings-close" id="btn-close-settings">✕</button>
           </div>
-        </div>
-      </div>
-    </div>
-    <div class="ai-chat-container">
-      <div class="ai-messages" id="aiMessages">
-        <div class="message ai">
-          <div class="message-avatar">🤖</div>
-          <div style="flex: 1;">
-            <div class="message-content">
-              <div class="message-sender">AI 助手</div>
-              <div class="structured-content">
-                你好！我是你的简历优化助手。<br>
-                你可以发送消息让我帮你优化简历、分析岗位匹配度，或者直接提问。
+          <div class="ai-settings-content">
+            <div class="ai-setting-item">
+              <label class="ai-setting-label">Provider</label>
+              <select class="ai-setting-select" id="sp-ai-provider">
+                ${providerOptions}
+              </select>
+            </div>
+            <div class="ai-setting-item">
+              <label class="ai-setting-label">API Base URL</label>
+              <input type="text" class="ai-setting-input" id="sp-ai-base-url" placeholder="https://open.bigmodel.cn/api/coding/paas/v4">
+            </div>
+            <div class="ai-setting-item">
+              <label class="ai-setting-label">API Key</label>
+              <input type="password" class="ai-setting-input" id="sp-ai-api-key" placeholder="输入你的 API Key" autocomplete="off">
+            </div>
+            <div class="ai-setting-item">
+              <label class="ai-setting-label">模型名称</label>
+              <input type="text" class="ai-setting-input" id="sp-ai-model" placeholder="glm-5">
+            </div>
+            <button class="ai-setting-save" id="sp-ai-save-btn">保存配置</button>
+            <div class="ai-deep-think-toggle" style="margin-top:12px">
+              <label class="ai-dt-toggle-label">
+                <span>深度思考</span>
+                <input type="checkbox" id="sp-dt-toggle" class="ai-dt-toggle-input">
+                <span class="ai-dt-toggle-slider"></span>
+              </label>
+            </div>
+            <div class="ai-secondary-model-section" id="sp-secondary-model">
+              <button class="ai-secondary-model-toggle" id="sp-sec-model-toggle" type="button">▶ 第二模型配置</button>
+              <div class="ai-secondary-model-body" id="sp-sec-model-body" style="display:none">
+                <div class="ai-setting-item"><label class="ai-setting-label">Provider</label><select class="ai-setting-select" id="sp-sec-provider">${providerOptions}</select></div>
+                <div class="ai-setting-item"><label class="ai-setting-label">API Base URL</label><input class="ai-setting-input" id="sp-sec-base-url" placeholder="https://api.openai.com/v1"></div>
+                <div class="ai-setting-item"><label class="ai-setting-label">API Key</label><input class="ai-setting-input" type="password" id="sp-sec-api-key" placeholder="输入第二模型 API Key" autocomplete="off"></div>
+                <div class="ai-setting-item"><label class="ai-setting-label">模型名称</label><input class="ai-setting-input" id="sp-sec-model" placeholder="gpt-4o"></div>
+                <button class="ai-setting-save" id="sp-sec-save-btn">保存第二模型</button>
               </div>
             </div>
-            <div class="message-time">${getAIChatTime()}</div>
           </div>
         </div>
-        <div class="typing-indicator" id="typingIndicator" style="display: none;">
-          <span></span><span></span><span></span>
-        </div>
       </div>
-      <div class="ai-input-minimal">
-        <label class="upload-minimal-btn" title="上传图片或文件">
-          +
-          <input type="file" id="aiFileUpload" accept="image/*,.pdf,.doc,.docx,.txt,.md" multiple>
-        </label>
-        <input type="text" class="ai-input-field" id="aiInput" placeholder="输入消息...">
-        <button class="send-minimal-btn" id="sendBtn">➤</button>
+      <div class="ai-panel-main">
+        <div class="ai-messages" id="aiMessages">
+          <div class="message ai">
+            <div class="message-avatar">🤖</div>
+            <div style="flex: 1;">
+              <div class="message-content">
+                <div class="message-sender">AI 助手</div>
+                <div class="structured-content">
+                  你好！我是你的简历优化助手。<br>
+                  你可以发送消息让我帮你优化简历、分析岗位匹配度，或者直接提问。
+                </div>
+              </div>
+              <div class="message-time">${getAIChatTime()}</div>
+            </div>
+          </div>
+          <div class="typing-indicator" id="typingIndicator" style="display: none;">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+        <div class="ai-input-minimal ai-input-bar">
+          <label class="upload-minimal-btn" title="上传图片或文件">
+            +
+            <input type="file" id="aiFileUpload" accept="image/*,.pdf,.doc,.docx,.txt,.md" multiple>
+          </label>
+          <input type="text" class="ai-input-field" id="aiInput" placeholder="输入消息...">
+          <button class="send-minimal-btn" id="sendBtn">➤</button>
+        </div>
       </div>
     </div>
   `;
@@ -3845,6 +3850,23 @@ function loadSplitRightAssistant(jobId) {
   bindSplitRightAssistantEvents(jobId);
   // 加载 AI 配置
   loadSplitAIConfig();
+
+  // 能力探测
+  getAICapabilities().then(caps => {
+    const dtToggle = document.getElementById('sp-dt-toggle');
+    if (dtToggle) {
+      if (!caps.deep_think) {
+        dtToggle.disabled = true;
+        dtToggle.closest('.ai-deep-think-toggle').title = '深度思考能力未就绪';
+      } else {
+        dtToggle.disabled = false;
+      }
+    }
+    window.__aiCapabilities = caps;
+  }).catch(e => {
+    console.warn('能力探测失败:', e.message);
+    window.__aiCapabilities = { assistant_chat: true, deep_think: false };
+  });
 }
 
 function getAIChatTime() {
@@ -3917,22 +3939,103 @@ function hideAITyping() {
 }
 
 /**
- * 格式化深度思考结果为聊天回复
+ * 格式化深度思考结果为结构化卡片
  */
 function formatDeepThinkReply(dtData) {
+  if (!dtData) return '深度思考执行失败';
+
   const result = dtData.result || dtData;
   if (typeof result === 'string') return result;
-  const parts = [];
-  if (result.final_answer) parts.push(result.final_answer);
-  if (result.summary) parts.push(result.summary);
-  if (result.analysis) parts.push(result.analysis);
-  if (result.rounds && Array.isArray(result.rounds)) {
-    parts.push('**思考过程：**');
-    result.rounds.forEach((r, i) => {
-      if (r.reasoning) parts.push(`第${i+1}轮：${r.reasoning}`);
-    });
+
+  const modeLabel = { single: '单模型', dual: '双模型', auto: '自动' };
+  const stopLabel = {
+    max_rounds: '达到最大轮次',
+    no_new_info: '信息收敛',
+    api_error: 'API错误',
+    critic_stop: '评审建议停止'
+  };
+
+  const mode = modeLabel[result.mode_used] || result.mode_used || '未知';
+  const rounds = result.rounds_used || 0;
+  const stopReason = stopLabel[result.stop_reason] || result.stop_reason || '完成';
+  const degraded = result.degraded || false;
+  const answer = result.final_answer || result.answer || result.summary || '';
+
+  const state = result.state || {};
+  const conclusions = (state.verified_conclusions || []).map(c => c.text || c).filter(Boolean);
+  const openQuestions = (state.open_questions || []).filter(Boolean);
+  const logs = result.logs || [];
+
+  // 如果没有结构化数据，回退到纯文本拼接
+  if (!answer && !conclusions.length && !logs.length) {
+    const parts = [];
+    if (result.final_answer) parts.push(result.final_answer);
+    if (result.summary) parts.push(result.summary);
+    if (result.analysis) parts.push(result.analysis);
+    if (result.rounds && Array.isArray(result.rounds)) {
+      parts.push('**思考过程：**');
+      result.rounds.forEach((r, i) => {
+        if (r.reasoning) parts.push(`第${i+1}轮：${r.reasoning}`);
+      });
+    }
+    if (parts.length > 0) return parts.join('\n\n');
+    return JSON.stringify(result, null, 2);
   }
-  return parts.length > 0 ? parts.join('\n\n') : JSON.stringify(result, null, 2);
+
+  let html = `<div class="dt-result-card">`;
+
+  html += `<div class="dt-card-header">
+    <span class="dt-card-icon">🧠</span>
+    <span class="dt-card-title">深度思考分析</span>
+    <div class="dt-card-meta">
+      <span class="dt-meta-tag">${mode}</span>
+      <span class="dt-meta-tag">${rounds} 轮</span>
+      <span class="dt-meta-tag">${stopReason}</span>
+      ${degraded ? '<span class="dt-meta-tag dt-degraded">⚠ 已降级</span>' : ''}
+    </div>
+  </div>`;
+
+  if (answer) {
+    html += `<div class="dt-card-section">
+      <div class="dt-section-title">📋 分析结论</div>
+      <div class="dt-section-body">${escapeHtml(answer).replace(/\n/g, '<br>')}</div>
+    </div>`;
+  }
+
+  if (conclusions.length > 0) {
+    html += `<div class="dt-card-section">
+      <div class="dt-section-title">✅ 关键发现 (${conclusions.length})</div>
+      <ul class="dt-conclusion-list">
+        ${conclusions.map(c => `<li>${escapeHtml(c)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+
+  if (openQuestions.length > 0) {
+    html += `<div class="dt-card-section">
+      <div class="dt-section-title">❓ 待探讨 (${openQuestions.length})</div>
+      <ul class="dt-conclusion-list">
+        ${openQuestions.map(q => `<li>${escapeHtml(q)}</li>`).join('')}
+      </ul>
+    </div>`;
+  }
+
+  if (logs.length > 0) {
+    html += `<div class="dt-card-section dt-trace-section">
+      <button class="dt-trace-toggle" onclick="this.parentElement.classList.toggle('dt-trace-open')">
+        ▶ 思考过程 (${logs.length} 条记录)
+      </button>
+      <div class="dt-trace-body">
+        ${logs.map(log => {
+          const msg = typeof log === 'string' ? log : (log.message || log.summary || JSON.stringify(log));
+          return `<div class="dt-trace-item">${escapeHtml(msg)}</div>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+
+  html += `</div>`;
+  return html;
 }
 
 /**
@@ -3969,6 +4072,21 @@ function bindSplitRightAssistantEvents(jobId) {
       const deepThinkEnabled = dtToggle && dtToggle.checked;
       let data;
       if (deepThinkEnabled) {
+        // 能力检查
+        const caps = window.__aiCapabilities || {};
+        if (!caps.deep_think) {
+          hideAITyping();
+          if (sendBtn) sendBtn.disabled = false;
+          addAIResponseMessage('⚠️ 深度思考能力未就绪，请先在设置中配置AI模型。');
+          return;
+        }
+
+        // 构建上下文摘要
+        const contextSummary = aiConversationHistory
+          .slice(-6)
+          .map(m => `${m.role}: ${(m.text || '').substring(0, 200)}`)
+          .join('\n');
+
         // 深度思考模式
         const dtData = await deepThink(text, jobId);
         data = {
@@ -4016,12 +4134,12 @@ function bindSplitRightAssistantEvents(jobId) {
   // 设置面板切换
   if (settingsBtn) {
     settingsBtn.addEventListener('click', () => {
-      if (settingsPanel) settingsPanel.style.display = settingsPanel.style.display === 'none' ? 'block' : 'none';
+      if (settingsPanel) settingsPanel.classList.toggle('is-open');
     });
   }
   if (closeSettingsBtn) {
     closeSettingsBtn.addEventListener('click', () => {
-      if (settingsPanel) settingsPanel.style.display = 'none';
+      if (settingsPanel) settingsPanel.classList.remove('is-open');
     });
   }
 

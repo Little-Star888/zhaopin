@@ -1063,8 +1063,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/ai/capabilities' && req.method === 'GET') {
+    aiHandler.handleGetCapabilities(req, res);
+    return;
+  }
+
   if (url.pathname === '/api/ai/deep-think' && req.method === 'POST') {
     aiHandler.handleDeepThink(req, res);
+    return;
+  }
+
+  if (url.pathname === '/api/ai/deep-think/config' && req.method === 'GET') {
+    aiHandler.handleGetDeepThinkConfig(req, res);
     return;
   }
 
