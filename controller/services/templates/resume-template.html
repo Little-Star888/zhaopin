@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>简历</title>
+  <style>
+    /* Constructivism（构成主义）色彩体系 */
+    :root {
+      --c-red: #E62B1E;
+      --c-black: #1A1A1A;
+      --c-paper: #F4F0EA;
+      --c-yellow: #FFC72C;
+      --c-gray: #8E8E8E;
+      --c-white: #FFFFFF;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans CJK SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--c-paper);
+      color: var(--c-black);
+      line-height: 1.7;
+      padding: 48px 60px;
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1, h2, h3, h4, h5, h6 {
+      font-family: 'Courier New', 'Noto Sans SC', monospace;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      font-weight: 900;
+      border-bottom: 3px solid var(--c-black);
+      padding-bottom: 6px;
+      margin: 28px 0 14px;
+    }
+    h1 { font-size: 28px; margin-top: 0; border-bottom-width: 4px; }
+    h2 { font-size: 22px; color: var(--c-red); }
+    h3 { font-size: 18px; }
+    h4 { font-size: 16px; }
+
+    p { margin: 8px 0; }
+
+    ul, ol { margin: 8px 0 8px 24px; }
+    li { margin: 4px 0; }
+
+    strong, b { color: var(--c-red); font-weight: 700; }
+
+    a { color: var(--c-red); text-decoration: none; border-bottom: 2px solid var(--c-yellow); }
+    a:hover { border-bottom-color: var(--c-red); }
+
+    blockquote {
+      border-left: 4px solid var(--c-black);
+      padding: 8px 16px;
+      margin: 12px 0;
+      background: var(--c-white);
+      font-style: italic;
+    }
+
+    code {
+      font-family: 'Courier New', monospace;
+      background: var(--c-black);
+      color: var(--c-yellow);
+      padding: 2px 6px;
+      font-size: 0.9em;
+    }
+
+    pre {
+      background: var(--c-black);
+      color: var(--c-paper);
+      padding: 16px;
+      margin: 12px 0;
+      overflow-x: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+    pre code { background: none; color: inherit; padding: 0; }
+
+    hr {
+      border: none;
+      border-top: 3px solid var(--c-black);
+      margin: 24px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 12px 0;
+    }
+    th, td {
+      border: 2px solid var(--c-black);
+      padding: 8px 12px;
+      text-align: left;
+    }
+    th {
+      background: var(--c-black);
+      color: var(--c-paper);
+      font-weight: 700;
+    }
+
+    @media print {
+      body { padding: 0; max-width: none; }
+      h1, h2, h3, h4, h5, h6 { page-break-after: avoid; }
+    }
+  </style>
+</head>
+<body>
+{BODY}
+</body>
+</html>

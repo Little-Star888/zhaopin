@@ -8,11 +8,15 @@
     "alarms",
     "cookies",
     "activeTab",
-    "scripting"
+    "scripting",
+    "nativeMessaging"
   ],
   "host_permissions": [
     "https://www.zhipin.com/*",
-    "https://open.feishu.cn/*"
+    "https://*.51job.com/*",
+    "https://*.zhaopin.com/*",
+    "https://open.feishu.cn/*",
+    "http://127.0.0.1:7893/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -22,6 +26,22 @@
       "matches": ["https://www.zhipin.com/*"],
       "js": ["content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.51job.com/*"],
+      "js": ["content-51job.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.zhaopin.com/*"],
+      "js": ["content-zhaopin.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["zhaopin-main-world.js"],
+      "matches": ["https://*.zhaopin.com/*"]
     }
   ],
   "action": {

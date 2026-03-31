@@ -1,0 +1,346 @@
+/**
+ * Resume Pagination CSS - 粗野主义（Brutalist）风格
+ *
+ * 设计特征：红色强调色 #E62B1E、粗黑边框 3px、Courier New 等宽字体、
+ * 12px 12px 0 阴影、区块边框、uppercase 标题
+ *
+ * 约束：
+ * 1. 所有选择器必须以 .resume-preview-shell--paginated 开头
+ * 2. 不允许无前缀的全局样式
+ * 3. timeline 模板保持不变
+ */
+
+/* ==================== 分页容器 ==================== */
+
+.resume-preview-shell--paginated {
+  --rp-page-gap: 16px;
+  --rp-page-bg: #fffdf9;
+  --rp-page-shadow: 12px 12px 0 rgba(0, 0, 0, 0.12);
+  --rp-page-border: 3px solid #1a1a1a;
+  --rp-scale: 1;
+
+  /* 粗野主义色彩变量 */
+  --rp-color-red: #E62B1E;
+  --rp-color-black: #1A1A1A;
+  --rp-color-paper: #F4F0EA;
+  --rp-color-yellow: #FFC72C;
+
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+  background: #1a1a1a;
+  padding: 20px;
+  box-sizing: border-box;
+  font-family: 'Courier New', 'PingFang SC', 'Microsoft YaHei', monospace;
+}
+
+.resume-preview-shell--paginated.is-split-view {
+  overflow: auto;
+  padding: 12px;
+}
+
+.resume-preview-shell--paginated .pages-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--rp-page-gap);
+  max-width: calc(var(--rp-a4-width) * var(--rp-scale));
+  margin: 0 auto;
+}
+
+.resume-preview-shell--paginated.is-split-view .pages-container {
+  align-items: flex-start;
+  min-width: calc(var(--rp-a4-width) * var(--rp-scale));
+}
+
+/* ==================== 单页卡片 ==================== */
+
+.resume-preview-shell--paginated .resume-page {
+  position: relative;
+  width: var(--rp-a4-width);
+  min-height: var(--rp-a4-height);
+  margin: 0 auto;
+  background: var(--rp-page-bg);
+  border: var(--rp-page-border);
+  box-shadow: var(--rp-page-shadow);
+  padding: var(--rp-page-margin);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  zoom: var(--rp-scale);
+  border-radius: 0;
+}
+
+/* 页码显示 */
+.resume-preview-shell--paginated .resume-page__num {
+  position: absolute;
+  bottom: 10px;
+  right: 14px;
+  font-size: 10px;
+  font-weight: 800;
+  color: rgba(26, 26, 26, 0.15);
+  font-family: 'Courier New', monospace;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* 页面内容区 */
+.resume-preview-shell--paginated .resume-page__content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--rp-section-gap);
+  overflow: hidden;
+}
+
+/* ==================== Header 区域 ==================== */
+
+.resume-preview-shell--paginated .resume-sheet__header {
+  margin-bottom: var(--rp-section-gap);
+  padding-bottom: 14px;
+  border-bottom: 4px solid var(--rp-color-red);
+  background:
+    linear-gradient(135deg, rgba(230, 43, 30, 0.08), transparent 42%),
+    linear-gradient(0deg, #fffdf9, #fffdf9);
+}
+
+.resume-preview-shell--paginated .resume-sheet__name {
+  font-size: var(--rp-font-name);
+  font-weight: 900;
+  color: #1a1a1a;
+  margin: 0 0 4px 0;
+  line-height: var(--rp-line-height-tight);
+  font-family: 'Courier New', monospace;
+  letter-spacing: 1px;
+}
+
+.resume-preview-shell--paginated .resume-sheet__headline {
+  font-size: var(--rp-font-headline);
+  font-weight: 800;
+  color: var(--rp-color-red);
+  margin-bottom: 6px;
+  line-height: var(--rp-line-height-tight);
+}
+
+.resume-preview-shell--paginated .resume-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+  margin-top: 10px;
+}
+
+.resume-preview-shell--paginated .resume-meta__item {
+  font-size: var(--rp-font-meta);
+  color: #1a1a1a;
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 2px solid #1a1a1a;
+  background: rgba(255, 255, 255, 0.92);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.resume-preview-shell--paginated .resume-summary {
+  font-size: var(--rp-font-body);
+  color: #5d5d5d;
+  line-height: var(--rp-line-height-normal);
+  margin-top: 10px;
+}
+
+/* ==================== Section 区块 ==================== */
+
+.resume-preview-shell--paginated .resume-section {
+  margin: 0;
+  padding: 12px 14px;
+  border: 2px solid #1a1a1a;
+  background: #ffffff;
+}
+
+.resume-preview-shell--paginated .resume-section__title {
+  font-size: var(--rp-font-section);
+  font-weight: 900;
+  color: #1a1a1a;
+  margin-bottom: var(--rp-section-gap);
+  padding-bottom: 4px;
+  border-bottom: 4px solid var(--rp-color-red);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  display: inline-block;
+}
+
+.resume-preview-shell--paginated .resume-section__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--rp-item-gap);
+}
+
+/* 列表项样式 - 红色矩形bullet */
+.resume-preview-shell--paginated .resume-list-item {
+  position: relative;
+  padding-left: 14px;
+  font-size: var(--rp-font-body);
+  line-height: var(--rp-line-height-normal);
+  color: #333;
+}
+
+.resume-preview-shell--paginated .resume-list-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  width: 7px;
+  height: 3px;
+  background: var(--rp-color-red);
+}
+
+/* Timeline 样式 - 保持不变 */
+.resume-preview-shell--paginated .resume-section--timeline .resume-section__body {
+  position: relative;
+  padding-left: 16px;
+}
+
+/* 时间轴线 */
+.resume-preview-shell--paginated .resume-section--timeline .resume-section__body::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: #ddd;
+}
+
+.resume-preview-shell--paginated .resume-block--timeline {
+  position: relative;
+  padding-left: 12px;
+}
+
+/* 时间点标记 */
+.resume-preview-shell--paginated .resume-block__marker {
+  position: absolute;
+  left: -14px;
+  top: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #999;
+  border: 1px solid #fff;
+}
+
+/* 时间段特殊标记 */
+.resume-preview-shell--paginated .resume-block--timeline.is-period .resume-block__marker {
+  background: #333;
+  width: 7px;
+  height: 7px;
+  left: -15px;
+}
+
+.resume-preview-shell--paginated .resume-block__content {
+  font-size: var(--rp-font-body);
+  line-height: var(--rp-line-height-normal);
+  color: #333;
+}
+
+/* ==================== Continuation 标记 ==================== */
+
+/* 跨页 section 的视觉提示 */
+.resume-preview-shell--paginated .resume-section[data-continuation="true"] {
+  position: relative;
+}
+
+.resume-preview-shell--paginated .resume-section[data-continuation="true"]::before {
+  content: '（接上页）';
+  display: block;
+  font-size: 10px;
+  color: #999;
+  margin-bottom: 4px;
+  font-style: italic;
+}
+
+/* ==================== 编辑态样式 ==================== */
+
+.resume-preview-shell--paginated[data-editable="true"] .resume-page {
+  cursor: text;
+}
+
+.resume-preview-shell--paginated[data-editable="true"] .resume-sheet__header,
+.resume-preview-shell--paginated[data-editable="true"] .resume-section__body {
+  outline: none;
+}
+
+/* 编辑时的焦点样式 - 粗野主义黄色 */
+.resume-preview-shell--paginated[data-editable="true"] .resume-section:focus-within {
+  box-shadow: 0 0 0 2px rgba(255, 199, 44, 0.4);
+}
+
+.resume-preview-shell--paginated[data-editable="true"] .resume-list-item:focus,
+.resume-preview-shell--paginated[data-editable="true"] .resume-block__content:focus {
+  background: rgba(255, 199, 44, 0.06);
+  outline: none;
+}
+
+/* ==================== 响应式适配 ==================== */
+
+/* 小屏幕：仅减小外层留白，缩放由分页器按容器宽度动态计算 */
+@media (max-width: 900px) {
+  .resume-preview-shell--paginated {
+    padding: 10px;
+  }
+}
+
+/* ==================== 打印样式 ==================== */
+
+@media print {
+  .resume-preview-shell--paginated {
+    background: white;
+    padding: 0;
+  }
+
+  .resume-preview-shell--paginated .pages-container {
+    gap: 0;
+  }
+
+  .resume-preview-shell--paginated .resume-page {
+    box-shadow: none;
+    border: 3px solid #1a1a1a;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+
+  .resume-preview-shell--paginated .resume-page:last-child {
+    page-break-after: auto;
+  }
+
+  .resume-preview-shell--paginated .resume-page__num {
+    display: none;
+  }
+
+  .resume-preview-shell--paginated .resume-section[data-continuation="true"]::before {
+    display: none;
+  }
+}
+
+/* ==================== 状态类 ==================== */
+
+/* 正在重排 */
+.resume-preview-shell--paginated.is-relayouting {
+  pointer-events: none;
+  opacity: 0.8;
+}
+
+/* 空状态 */
+.resume-preview-shell--paginated.is-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 400px;
+}
+
+.resume-preview-shell--paginated.is-empty::after {
+  content: '暂无简历内容';
+  color: #999;
+  font-size: 14px;
+}

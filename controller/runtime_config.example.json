@@ -1,10 +1,29 @@
 {
   "JOB_FILTER_MODE": "general_pm",
-  "EXPERIENCE": "103",
-  "MAX_LIST_PAGES_PER_RUN": 3,
+  "EXPERIENCE": "",
+  "MAX_LIST_PAGES_PER_RUN": 0,
   "MAX_LIST_PAGE_SIZE": 30,
-  "MAX_DETAIL_REQUESTS_PER_RUN": 3,
-  "EXP_HARD_EXCLUDE_SOURCE": "10年以上",
-  "deliveryEnabled": false
+  "MAX_DETAIL_REQUESTS_PER_RUN": 0,
+  "EXP_HARD_EXCLUDE_SOURCE": "",
+  "deliveryEnabled": true,
+  "companyProfileSources": {
+    "publicSourceOrder": [
+      "known_official_site",
+      "baidu_baike_direct",
+      "wikipedia_direct",
+      "public_search",
+      "gsxt_search",
+      "aiqicha_search"
+    ],
+    "enableLoggedInSources": false,
+    "loggedInSourceOrder": [
+      "aiqicha_browser"
+    ]
+  },
+  "companyProfileBrowser": {
+    "chromePath": "/usr/bin/google-chrome",
+    "userDataDir": "",
+    "extraArgs": [],
+    "aiqichaSearchTimeoutMs": 15000
+  }
 }
-

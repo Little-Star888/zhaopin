@@ -119,6 +119,11 @@ async function getTenantAccessToken(targetName) {
 }
 
 async function fetchTableFields(targetName) {
+  const fields = await fetchFieldDefinitions(targetName);
+  return fields.map((field) => field.field_name).filter(Boolean);
+}
+
+async function fetchFieldDefinitions(targetName) {
   const normalized = normalizeTargetName(targetName);
   const targetConfig = getTargetConfig(normalized);
   if (!targetConfig) {
@@ -138,7 +143,7 @@ async function fetchTableFields(targetName) {
     throw new Error(data.msg || data.message || `Failed to fetch fields for ${normalized}`);
   }
 
-  return (data.data?.items || []).map((field) => field.field_name).filter(Boolean);
+  return data.data?.items || [];
 }
 
 async function testTarget(targetName) {
@@ -199,6 +204,78 @@ async function batchCreateRecords(targetName, records) {
   return { success: true, count };
 }
 
+async function listRecords(targetName, { pageToken = null, pageSize = 100, viewId = null } = {}) {
+  const normalized = normalizeTargetName(targetName);
+  const targetConfig = getTargetConfig(normalized);
+  if (!targetConfig) {
+    throw new Error(`Unknown delivery target: ${targetName}`);
+  }
+
+  const token = await getTenantAccessToken(normalized);
+  const params = new URLSearchParams();
+  params.set('page_size', String(Math.max(1, Math.min(500, Number(pageSize) || 100))));
+  if (pageToken) {
+    params.set('page_token', pageToken);
+  }
+  if (viewId) {
+    params.set('view_id', viewId);
+  }
+
+  const response = await fetch(
+    `${FEISHU_API_BASE}/bitable/v1/apps/${targetConfig.appToken}/tables/${targetConfig.tableId}/records?${params.toString()}`,
+    {
+      headers: { Authorization: `Bearer ${token}` }
+    }
+  );
+  const data = await response.json();
+
+  if (!response.ok || data.code !== 0) {
+    throw new Error(data.msg || data.message || `Failed to list records for ${normalized}`);
+  }
+
+  return {
+    success: true,
+    items: Array.isArray(data.data?.items) ? data.data.items : [],
+    pageToken: data.data?.page_token || null,
+    hasMore: Boolean(data.data?.has_more),
+    total: data.data?.total || null
+  };
+}
+
+async function updateRecord(targetName, recordId, fields) {
+  const normalized = normalizeTargetName(targetName);
+  const targetConfig = getTargetConfig(normalized);
+  if (!targetConfig) {
+    throw new Error(`Unknown delivery target: ${targetName}`);
+  }
+  if (!recordId) {
+    throw new Error('recordId is required');
+  }
+
+  const token = await getTenantAccessToken(normalized);
+  const response = await fetch(
+    `${FEISHU_API_BASE}/bitable/v1/apps/${targetConfig.appToken}/tables/${targetConfig.tableId}/records/${recordId}`,
+    {
+      method: 'PUT',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ fields })
+    }
+  );
+  const data = await response.json();
+
+  if (!response.ok || data.code !== 0) {
+    throw new Error(data.msg || data.message || `Failed to update record ${recordId} for ${normalized}`);
+  }
+
+  return {
+    success: true,
+    record: data.data?.record || null
+  };
+}
+
 function validateTargetsConfig(config, filePath) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
     throw new Error(`Invalid feishu targets config: ${filePath}`);
@@ -239,8 +316,11 @@ module.exports = {
   targetExists,
   getTargetConfig,
   getTenantAccessToken,
+  fetchFieldDefinitions,
   fetchTableFields,
   batchCreateRecords,
+  listRecords,
+  updateRecord,
   resolveDeliveryTarget,
   listTargets,
   testTarget

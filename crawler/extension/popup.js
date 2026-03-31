@@ -28,6 +28,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadStatus();
 
   // 绑定事件
+  document.getElementById('btn-open-dashboard').addEventListener('click', openDashboard);
   startBtn.addEventListener('click', startCrawl);
   configBtn.addEventListener('click', openConfig);
   cookieBtn.addEventListener('click', refreshCookie);
@@ -35,6 +36,20 @@ document.addEventListener('DOMContentLoaded', async () => {
   autoToggle.addEventListener('click', () => toggleSwitch('auto', autoToggle));
   aiToggle.addEventListener('click', () => toggleSwitch('ai', aiToggle));
   pushToggle.addEventListener('click', () => toggleSwitch('push', pushToggle));
+
+  // 打开工作台（单例模式：已有标签则聚焦，否则新建）
+  function openDashboard() {
+    const dashboardUrl = chrome.runtime.getURL('dashboard.html');
+    chrome.tabs.query({url: dashboardUrl}, (tabs) => {
+      if (tabs.length > 0) {
+        chrome.tabs.update(tabs[0].id, {active: true});
+        chrome.windows.update(tabs[0].windowId, {focused: true});
+      } else {
+        chrome.tabs.create({url: dashboardUrl});
+      }
+      window.close();
+    });
+  }
 
   // 加载状态
   async function loadStatus() {
@@ -44,11 +59,52 @@ document.addEventListener('DOMContentLoaded', async () => {
         isRunning = response.data.isRunning;
         const runtimeConfig = response.data.runtimeConfig || {};
         todayCount.textContent = `${response.data.stats?.totalJobs || 0} 条`;
-        statusText.textContent = `模式:${runtimeConfig.JOB_FILTER_MODE || response.data.jobFilterMode} | 页数:${runtimeConfig.MAX_LIST_PAGES_PER_RUN || response.data.maxListPagesPerRun}`;
+        const pageLabel = Number.isInteger(runtimeConfig.MAX_LIST_PAGES_PER_RUN)
+          ? (runtimeConfig.MAX_LIST_PAGES_PER_RUN === 0 ? 'unlimited' : String(runtimeConfig.MAX_LIST_PAGES_PER_RUN))
+          : String(response.data.maxListPagesPerRun);
+        statusText.textContent = `模式:${runtimeConfig.JOB_FILTER_MODE || response.data.jobFilterMode} | 页数:${pageLabel}`;
         updateUI();
       }
     } catch (error) {
       console.error('Failed to load status:', error);
+      const wakeResult = await tryWakeController();
+      if (wakeResult.success) {
+        try {
+          const retry = await sendMessage({ type: 'GET_STATUS' });
+          if (retry && retry.success) {
+            isRunning = retry.data.isRunning;
+            const runtimeConfig = retry.data.runtimeConfig || {};
+            todayCount.textContent = `${retry.data.stats?.totalJobs || 0} 条`;
+            const pageLabel = Number.isInteger(runtimeConfig.MAX_LIST_PAGES_PER_RUN)
+              ? (runtimeConfig.MAX_LIST_PAGES_PER_RUN === 0 ? 'unlimited' : String(runtimeConfig.MAX_LIST_PAGES_PER_RUN))
+              : String(retry.data.maxListPagesPerRun);
+            statusText.textContent = `模式:${runtimeConfig.JOB_FILTER_MODE || retry.data.jobFilterMode} | 页数:${pageLabel}`;
+            updateUI();
+            showMessage('已自动唤醒 Controller', 'success');
+            return;
+          }
+        } catch (retryError) {
+          console.error('Retry after wake-up failed:', retryError);
+        }
+      }
+
+      statusText.textContent = '后端未连接';
+      statusText.style.color = '#ff4d4f';
+      crawlStatus.textContent = '离线';
+      crawlStatus.className = 'info-value warning';
+      startBtn.disabled = true;
+      if (wakeResult.errorType === 'NATIVE_HOST_NOT_INSTALLED') {
+        startBtn.textContent = 'Host 未安装';
+        const extId = wakeResult.extensionId ? ` ${wakeResult.extensionId}` : ' <extension-id>';
+        showMessage(`自动唤醒组件未安装，请运行: bash controller/install_host.sh${extId}`, 'error');
+      } else if (wakeResult.errorType === 'CONTROLLER_STARTING') {
+        startBtn.textContent = '启动中...';
+        startBtn.disabled = true;
+        showMessage('Controller 正在启动，请稍后刷新', 'info');
+      } else {
+        startBtn.textContent = '后端未启动';
+        showMessage('后端未启动，且自动唤醒失败', 'error');
+      }
     }
 
     // 检查飞书连接状态
@@ -79,14 +135,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       startBtn.textContent = '⏳ 采集中...';
       crawlStatus.textContent = '运行中';
       crawlStatus.className = 'info-value warning';
-      progressSection.classList.add('active');
+      progressSection.classList.add('is-active');
       statusText.textContent = '正在采集职位...';
     } else {
       startBtn.disabled = false;
       startBtn.textContent = '🚀 立即采集';
       crawlStatus.textContent = '待命';
       crawlStatus.className = 'info-value';
-      progressSection.classList.remove('active');
+      progressSection.classList.remove('is-active');
       statusText.textContent = '准备就绪';
     }
   }
@@ -144,26 +200,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       if (jobFilterMode === null) return;
 
       const experience = window.prompt(
-        'EXPERIENCE: 例如 102(1-3年), 103(3-5年), 104(5-10年)',
-        current.EXPERIENCE || '102'
+        'EXPERIENCE: 例如 102(1-3年), 103(3-5年), 104(5-10年)，留空=不限经验',
+        typeof current.EXPERIENCE === 'string' ? current.EXPERIENCE : ''
       );
       if (experience === null) return;
 
       const maxPages = window.prompt(
-        'MAX_LIST_PAGES_PER_RUN: 每轮抓几页列表',
-        String(current.MAX_LIST_PAGES_PER_RUN || 3)
+        'MAX_LIST_PAGES_PER_RUN: 每轮抓几页列表，0=unlimited',
+        String(Number.isInteger(current.MAX_LIST_PAGES_PER_RUN) ? current.MAX_LIST_PAGES_PER_RUN : 0)
       );
       if (maxPages === null) return;
 
       const maxDetails = window.prompt(
-        'MAX_DETAIL_REQUESTS_PER_RUN: 每轮抓几个详情',
-        String(current.MAX_DETAIL_REQUESTS_PER_RUN || 3)
+        'MAX_DETAIL_REQUESTS_PER_RUN: 每轮抓几个详情，0=unlimited',
+        String(Number.isInteger(current.MAX_DETAIL_REQUESTS_PER_RUN) ? current.MAX_DETAIL_REQUESTS_PER_RUN : 0)
       );
       if (maxDetails === null) return;
 
       const expHardExclude = window.prompt(
-        'EXP_HARD_EXCLUDE_SOURCE: 经验硬排除正则，不含斜杠',
-        current.EXP_HARD_EXCLUDE_SOURCE || '10年以上'
+        'EXP_HARD_EXCLUDE_SOURCE: 经验硬排除正则，不含斜杠，留空=关闭',
+        typeof current.EXP_HARD_EXCLUDE_SOURCE === 'string' ? current.EXP_HARD_EXCLUDE_SOURCE : ''
       );
       if (expHardExclude === null) return;
 
@@ -211,8 +267,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // 切换开关
   async function toggleSwitch(type, element) {
-    element.classList.toggle('active');
-    const enabled = element.classList.contains('active');
+    element.classList.toggle('is-active');
+    const enabled = element.classList.contains('is-active');
     
     // 保存配置
     const config = await chrome.storage.local.get('config');
@@ -244,10 +300,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 显示消息
   function showMessage(text, type) {
     messageBox.textContent = text;
-    messageBox.className = `message show ${type}`;
+    messageBox.className = `message is-visible ${type}`;
     
     setTimeout(() => {
-      messageBox.classList.remove('show');
+      messageBox.classList.remove('is-visible');
     }, 5000);
   }
 
@@ -262,6 +318,27 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
       });
     });
+  }
+
+  async function tryWakeController() {
+    try {
+      const response = await sendMessage({
+        type: 'WAKE_UP_CONTROLLER',
+        reason: 'popup_status_bootstrap'
+      });
+      if (response && response.success) {
+        return { success: true };
+      }
+      return {
+        success: false,
+        errorType: response?.errorType || 'CONTROLLER_UNREACHABLE',
+        error: response?.error || '',
+        extensionId: response?.extensionId || null
+      };
+    } catch (error) {
+      console.error('Wake-up request failed:', error);
+      return { success: false, errorType: 'CONTROLLER_UNREACHABLE', error: error.message, extensionId: null };
+    }
   }
 
   // 监听进度更新

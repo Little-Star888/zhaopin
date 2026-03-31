@@ -55,7 +55,7 @@ async function processRecord(record) {
   }
 
   try {
-    const result = await batchCreateRecords(record.deliveryTarget, [{ fields: record.payload }]);
+    const result = await batchCreateRecords(record.deliveryTarget, [{ fields: sanitizePayloadForFeishu(record.payload) }]);
     if (result.success) {
       markDeliveryRecordSent(record.id);
       console.log(`[DeliveryWorker] Record ${record.id} sent to ${record.deliveryTarget}`);
@@ -66,6 +66,17 @@ async function processRecord(record) {
   } catch (error) {
     handleDeliveryFailure(record, error.message || 'unknown_delivery_error');
   }
+}
+
+function sanitizePayloadForFeishu(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload;
+  }
+
+  const sanitized = { ...payload };
+  delete sanitized.encryptBrandId;
+  delete sanitized['文本'];
+  return sanitized;
 }
 
 function handleDeliveryFailure(record, errorMessage) {

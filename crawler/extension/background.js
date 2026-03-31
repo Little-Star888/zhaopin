@@ -115,6 +115,7 @@ const RUNTIME_CONFIG_DEFAULTS = {
 };
 
 const MANUAL_ALARM_PAUSE_MS = 10 * 60 * 1000;
+const NATIVE_HOST_NAME = 'com.zhaopin.controller';
 
 // ============ 主服务 ============
 class JobHunterService {
@@ -217,6 +218,104 @@ class JobHunterService {
       maxListPagesPerRun: this.getMaxListPagesPerRun(),
       maxListPageSize: this.getMaxListPageSize()
     };
+  }
+
+  async isControllerReachable(timeoutMs = 1500) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const response = await fetch(`${CONFIG.CONTROLLER_BASE_URL}/status`, {
+        method: 'GET',
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+      return response.ok;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  async waitForControllerReady(timeoutMs = 8000) {
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (await this.isControllerReachable(1200)) {
+        return true;
+      }
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    return false;
+  }
+
+  async sendNativeHostMessage(payload = {}) {
+    try {
+      const response = await chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, payload);
+      if (!response || response.success === false) {
+        return {
+          success: false,
+          error: response?.error || 'Native host returned an empty response',
+          errorType: 'NATIVE_HOST_ERROR'
+        };
+      }
+      return response;
+    } catch (error) {
+      const errMsg = (error && error.message) ? error.message : String(error);
+      const isHostMissing = /native messaging host.*not found|host not registered|no such native|native messaging host.*not registered/i.test(errMsg);
+      return {
+        success: false,
+        error: errMsg,
+        errorType: isHostMissing ? 'NATIVE_HOST_NOT_INSTALLED' : 'NATIVE_HOST_ERROR',
+        isNativeHostMissing: isHostMissing
+      };
+    }
+  }
+
+  async wakeUpController(reason = 'unknown') {
+    if (await this.isControllerReachable()) {
+      return { success: true, running: true, source: 'http' };
+    }
+
+    const hostResponse = await this.sendNativeHostMessage({
+      action: 'ensure_server',
+      reason
+    });
+
+    if (!hostResponse.success) {
+      const errorType = hostResponse.errorType || 'CONTROLLER_UNREACHABLE';
+      const result = {
+        success: false,
+        error: hostResponse.error,
+        errorType
+      };
+      if (errorType === 'NATIVE_HOST_NOT_INSTALLED') {
+        result.extensionId = chrome.runtime.id;
+      }
+      return result;
+    }
+
+    // native host 内部已等待 8 秒确认就绪，这里用短窗口做快速二次确认
+    const ready = await this.waitForControllerReady(2000);
+    if (!ready) {
+      return {
+        success: false,
+        error: 'Controller is starting up, not yet reachable',
+        errorType: 'CONTROLLER_STARTING'
+      };
+    }
+
+    return {
+      success: true,
+      running: true,
+      source: 'native_host',
+      data: hostResponse
+    };
+  }
+
+  async notifyControllerSessionEvent(event, payload = {}) {
+    return this.sendNativeHostMessage({
+      action: 'session_event',
+      event,
+      ...payload
+    });
   }
 
   sanitizeRuntimeConfig(config = {}) {
@@ -547,141 +646,138 @@ class JobHunterService {
             sendResponse({ success: false, error: 'Already running' });
             return;
           }
+          await this.notifyControllerSessionEvent('crawl_start', {
+            source: 'extension_background'
+          });
           // 记录 dashboard 传入的参数（当前采集由队列驱动，payload 仅供参考）
           if (request.payload) {
             console.log('[JobHunter] Dashboard payload:', request.payload);
           }
           // 根据请求的平台选择采集流程（Dashboard 通过 payload.platform 传入）
-          const requestPlatform = request.payload?.platform || request.platform || 'boss';
-          if (requestPlatform === 'all') {
-            // 全平台串行采集：boss → 51job → liepin → zhaopin（依次执行，汇总结果）
-            const ALL_PLATFORMS = ['boss', '51job', 'liepin', 'zhaopin'];
-            // 平台显示名称映射
-            const PLATFORM_LABELS = {
-              boss: 'Boss直聘', '51job': '前程无忧', liepin: '猎聘', zhaopin: '智联招聘'
-            };
-            console.log('[JobHunter] 启动全平台串行采集:', ALL_PLATFORMS.map(p => PLATFORM_LABELS[p] || p));
-            this.isRunning = true;
-            this.crawlState.status = 'running';
-
-            const byPlatform = {};
-            let totalJobs = 0;
-            let totalWithDesc = 0;
-            const errors = [];
-            let stoppedEarly = false;
-
-            for (const platform of ALL_PLATFORMS) {
-              // 每轮开始前检查停止标志
-              if (!this.isRunning) {
-                console.log(`[JobHunter] 全平台采集被用户停止，跳过剩余平台（已完成: ${Object.keys(byPlatform).join(', ')}）`);
-                stoppedEarly = true;
-                break;
-              }
-              const label = PLATFORM_LABELS[platform] || platform;
-              console.log(`[JobHunter] [全平台 ${Object.keys(byPlatform).length + 1}/${ALL_PLATFORMS.length}] 开始采集: ${label} (${platform})`);
-              try {
-                let result;
-                if (platform === 'boss') {
-                  // boss 走原有 executeCrawlTask 逻辑（内部会设 isRunning=false）
-                  result = await this.executeCrawlTask(null);
-                } else if (platform === '51job') {
-                  this.isRunning = true; // 重新启用，供下一轮循环检查
-                  result = await this.execute51JobCrawl();
-                } else if (platform === 'liepin') {
-                  this.isRunning = true;
-                  // 猎聘尚未实现采集器，跳过并记录
-                  console.warn(`[JobHunter] ${label} 采集器尚未实现，跳过`);
-                  byPlatform[platform] = { total: 0, withDescription: 0, skipped: true, reason: 'not_implemented' };
-                  continue;
-                } else if (platform === 'zhaopin') {
-                  this.isRunning = true;
-                  result = await this.executeZhaopinCrawl();
-                }
-
-                const platformTotal = result?.success ? (result.totalJobs ?? result.total ?? 0) : 0;
-                const platformWithDesc = result?.withDescription ?? 0;
-                byPlatform[platform] = { total: platformTotal, withDescription: platformWithDesc };
-                totalJobs += platformTotal;
-                totalWithDesc += platformWithDesc;
-                console.log(`[JobHunter] ${label} 采集完成: ${platformTotal} 条`);
-              } catch (err) {
-                console.warn(`[JobHunter] ${label} 采集异常:`, err.message);
-                errors.push({ platform, error: err.message });
-                byPlatform[platform] = { total: 0, withDescription: 0, error: err.message };
-                // 单平台失败不中断，继续下一个平台
-              }
-            }
-
-            this.isRunning = false;
-            this.crawlState.status = 'completed';
-            const allResult = {
-              success: true,
-              platform: 'all',
-              total: totalJobs,
-              totalJobs,
-              withDescription: totalWithDesc,
-              totalWithDescription: totalWithDesc,
-              byPlatform,
-              errors: errors.length > 0 ? errors : undefined,
-              stoppedEarly
-            };
-            console.log('[JobHunter] 全平台采集完成:', JSON.stringify(byPlatform));
-            sendResponse({ success: true, data: allResult });
-          } else if (requestPlatform === '51job') {
-            // 51job 专用采集流程（DOM解析模式）
-            console.log('[JobHunter] 启动 51job 采集流程');
-            this.isRunning = true;
-            this.crawlState.status = 'running';
-            const result51 = await this.execute51JobCrawl(request.payload || {});
-
-            // 51job 分页采集已在内部逐页调用 reportJobsToController 入库，无需外部重复
-
-            this.isRunning = false;
-            this.crawlState.status = 'completed';
-            sendResponse({ success: true, data: result51 });
-          } else if (requestPlatform === 'zhaopin') {
-            // 智联招聘专用采集流程
-            console.log('[JobHunter] 启动智联招聘采集流程');
-            this.isRunning = true;
-            this.crawlState.status = 'running';
-            const resultZhaopin = await this.executeZhaopinCrawl(request.payload || {});
-
-            // 智联分页采集已在内部逐页调用 reportJobsToController 入库，无需外部重复
-
-            this.isRunning = false;
-            this.crawlState.status = 'completed';
-            sendResponse({ success: true, data: resultZhaopin });
-          } else {
-            let manualTask = null;
-            if (request.payload?.keyword) {
-              const cityName = (request.payload.city || '北京').trim() || '北京';
-              const city =
-                CONFIG.CITIES.find((item) => item.name === cityName) ||
-                CONFIG.CITIES.find((item) => item.name.includes(cityName) || cityName.includes(item.name)) ||
-                CONFIG.CITIES[0];
-              manualTask = {
-                city: {
-                  name: cityName,
-                  code: city?.code || CONFIG.CITIES[0].code
-                },
-                keyword: request.payload.keyword.trim(),
-                taskId: `manual-${Date.now()}`,
-                source: 'manual'
+          try {
+            const requestPlatform = request.payload?.platform || request.platform || 'boss';
+            if (requestPlatform === 'all') {
+              // 全平台串行采集：boss → 51job → liepin → zhaopin（依次执行，汇总结果）
+              const ALL_PLATFORMS = ['boss', '51job', 'liepin', 'zhaopin'];
+              // 平台显示名称映射
+              const PLATFORM_LABELS = {
+                boss: 'Boss直聘', '51job': '前程无忧', liepin: '猎聘', zhaopin: '智联招聘'
               };
-              this.manualAlarmPauseUntil = Date.now() + MANUAL_ALARM_PAUSE_MS;
-              console.log('[JobHunter] Dashboard manual task injected:', manualTask);
-              console.log(`[JobHunter] Auto alarms paused for ${Math.ceil(MANUAL_ALARM_PAUSE_MS / 60000)}min due to manual run`);
-            }
-            const results = await this.executeCrawlTask(manualTask);
-            if (results && results.success === false) {
-              sendResponse({
-                success: false,
-                error: results.error || 'Crawl failed',
-                data: results
-              });
+              console.log('[JobHunter] 启动全平台串行采集:', ALL_PLATFORMS.map(p => PLATFORM_LABELS[p] || p));
+              this.isRunning = true;
+              this.crawlState.status = 'running';
+
+              const byPlatform = {};
+              let totalJobs = 0;
+              let totalWithDesc = 0;
+              const errors = [];
+              let stoppedEarly = false;
+
+              for (const platform of ALL_PLATFORMS) {
+                if (!this.isRunning) {
+                  console.log(`[JobHunter] 全平台采集被用户停止，跳过剩余平台（已完成: ${Object.keys(byPlatform).join(', ')}）`);
+                  stoppedEarly = true;
+                  break;
+                }
+                const label = PLATFORM_LABELS[platform] || platform;
+                console.log(`[JobHunter] [全平台 ${Object.keys(byPlatform).length + 1}/${ALL_PLATFORMS.length}] 开始采集: ${label} (${platform})`);
+                try {
+                  let result;
+                  if (platform === 'boss') {
+                    result = await this.executeCrawlTask(null);
+                  } else if (platform === '51job') {
+                    this.isRunning = true;
+                    result = await this.execute51JobCrawl();
+                  } else if (platform === 'liepin') {
+                    this.isRunning = true;
+                    console.warn(`[JobHunter] ${label} 采集器尚未实现，跳过`);
+                    byPlatform[platform] = { total: 0, withDescription: 0, skipped: true, reason: 'not_implemented' };
+                    continue;
+                  } else if (platform === 'zhaopin') {
+                    this.isRunning = true;
+                    result = await this.executeZhaopinCrawl();
+                  }
+
+                  const platformTotal = result?.success ? (result.totalJobs ?? result.total ?? 0) : 0;
+                  const platformWithDesc = result?.withDescription ?? 0;
+                  byPlatform[platform] = { total: platformTotal, withDescription: platformWithDesc };
+                  totalJobs += platformTotal;
+                  totalWithDesc += platformWithDesc;
+                  console.log(`[JobHunter] ${label} 采集完成: ${platformTotal} 条`);
+                } catch (err) {
+                  console.warn(`[JobHunter] ${label} 采集异常:`, err.message);
+                  errors.push({ platform, error: err.message });
+                  byPlatform[platform] = { total: 0, withDescription: 0, error: err.message };
+                }
+              }
+
+              this.isRunning = false;
+              this.crawlState.status = 'completed';
+              const allResult = {
+                success: true,
+                platform: 'all',
+                total: totalJobs,
+                totalJobs,
+                withDescription: totalWithDesc,
+                totalWithDescription: totalWithDesc,
+                byPlatform,
+                errors: errors.length > 0 ? errors : undefined,
+                stoppedEarly
+              };
+              console.log('[JobHunter] 全平台采集完成:', JSON.stringify(byPlatform));
+              sendResponse({ success: true, data: allResult });
+            } else if (requestPlatform === '51job') {
+              console.log('[JobHunter] 启动 51job 采集流程');
+              this.isRunning = true;
+              this.crawlState.status = 'running';
+              const result51 = await this.execute51JobCrawl(request.payload || {});
+              this.isRunning = false;
+              this.crawlState.status = 'completed';
+              sendResponse({ success: true, data: result51 });
+            } else if (requestPlatform === 'zhaopin') {
+              console.log('[JobHunter] 启动智联招聘采集流程');
+              this.isRunning = true;
+              this.crawlState.status = 'running';
+              const resultZhaopin = await this.executeZhaopinCrawl(request.payload || {});
+              this.isRunning = false;
+              this.crawlState.status = 'completed';
+              sendResponse({ success: true, data: resultZhaopin });
             } else {
-              sendResponse({ success: true, data: results });
+              let manualTask = null;
+              if (request.payload?.keyword) {
+                const cityName = (request.payload.city || '北京').trim() || '北京';
+                const city =
+                  CONFIG.CITIES.find((item) => item.name === cityName) ||
+                  CONFIG.CITIES.find((item) => item.name.includes(cityName) || cityName.includes(item.name)) ||
+                  CONFIG.CITIES[0];
+                manualTask = {
+                  city: {
+                    name: cityName,
+                    code: city?.code || CONFIG.CITIES[0].code
+                  },
+                  keyword: request.payload.keyword.trim(),
+                  taskId: `manual-${Date.now()}`,
+                  source: 'manual'
+                };
+                this.manualAlarmPauseUntil = Date.now() + MANUAL_ALARM_PAUSE_MS;
+                console.log('[JobHunter] Dashboard manual task injected:', manualTask);
+                console.log(`[JobHunter] Auto alarms paused for ${Math.ceil(MANUAL_ALARM_PAUSE_MS / 60000)}min due to manual run`);
+              }
+              const results = await this.executeCrawlTask(manualTask);
+              if (results && results.success === false) {
+                sendResponse({
+                  success: false,
+                  error: results.error || 'Crawl failed',
+                  data: results
+                });
+              } else {
+                sendResponse({ success: true, data: results });
+              }
             }
+          } finally {
+            await this.notifyControllerSessionEvent('crawl_stop', {
+              source: 'extension_background'
+            });
           }
           break;
 
@@ -774,6 +870,25 @@ class JobHunterService {
         case 'OPEN_VERIFICATION_TAB': {
           const opened = await this.focusManualVerificationTab();
           sendResponse({ success: Boolean(opened), data: { opened } });
+          break;
+        }
+
+        case 'WAKE_UP_CONTROLLER': {
+          const result = await this.wakeUpController(request.reason || 'runtime_message');
+          sendResponse(result.success
+            ? { success: true, data: result }
+            : { success: false, error: result.error || 'Wake-up failed', errorType: result.errorType || 'CONTROLLER_UNREACHABLE', data: result });
+          break;
+        }
+
+        case 'CONTROLLER_SESSION_EVENT': {
+          const result = await this.notifyControllerSessionEvent(request.event, {
+            clientId: request.clientId,
+            source: request.source || 'extension_runtime'
+          });
+          sendResponse(result.success
+            ? { success: true, data: result }
+            : { success: false, error: result.error || 'Session event failed', data: result });
           break;
         }
 
@@ -2813,6 +2928,10 @@ class JobHunterService {
           normalizedRequestedCity.includes(normalizedName);
       })
       : areaCatalog.filter((item) => ['北京', '上海', '深圳', '杭州'].includes(item.name));
+    console.log(
+      `[51job] city match debug: requested="${requestedCity}", normalized="${normalizedRequestedCity}", ` +
+      `matched=${cities.length}${cities.length > 0 ? `, samples=${cities.slice(0, 5).map(item => item.name).join('/')}` : ''}`
+    );
     const keywords = requestedKeyword ? [requestedKeyword] : (CONFIG.KEYWORDS || ['AI产品经理']);
     const allJobs = [];
     const cityDetails = [];
@@ -2920,7 +3039,6 @@ class JobHunterService {
     let totalFound = 0;
     let totalNew = 0;
     let effectiveMaxPages = maxPages;
-    let remainingDetailBudget = detailBudget;
 
     const pageTaskResolution = await this._resolve51jobPageTasks(city, keyword, maxPages);
     let pendingTasks = pageTaskResolution.tasks;
@@ -3010,13 +3128,17 @@ class JobHunterService {
           console.warn(`[51job] ${city.name} ${keyword} p${pageNum} 采集失败: ${err.message}`);
         }
 
-        if (pageJobs.length > 0 && remainingDetailBudget > 0) {
+        const shouldEnrichPageDetails = pageJobs.length > 0;
+        if (shouldEnrichPageDetails) {
+          const pageDetailJobCount = pageJobs.filter(job => job && job.url && (!job.description || !job.description.trim())).length;
           const detailResult = await this.enrich51JobDetails(pageJobs, {
-            budget: remainingDetailBudget,
+            budget: pageDetailJobCount,
             interval: detailInterval,
             searchTabId: sharedTabId
           });
-          remainingDetailBudget -= detailResult.consumed;
+          console.log(
+            `[51job] p${pageNum} 详情补抓完成: requested=${pageDetailJobCount}, consumed=${detailResult.consumed}`
+          );
         }
 
         if (pageJobs.length > 0 && crawlBatchId) {
@@ -3524,29 +3646,12 @@ class JobHunterService {
       if (!this.isRunning) break;
 
       let tabId = null;
-      let reusedSearchTab = false;
       let response = null;
       try {
-        if (searchTabId) {
-          try {
-            const clickResult = await this.fetch51JobDetailViaListClick(searchTabId, job);
-            if (clickResult) {
-              tabId = clickResult.tabId;
-              reusedSearchTab = clickResult.reusedSearchTab;
-              response = clickResult.response;
-            }
-          } catch (clickError) {
-            console.warn(`[51job] 列表点击详情失败 (${this.extract51JobPlatformJobId(job)}): ${clickError.message}`);
-          }
-        }
-
-        if (!response) {
-          const tab = await this.createTabWithRetry({ url: job.url, active: false });
-          tabId = tab.id;
-          reusedSearchTab = false;
-          await this.sleep(4000);
-          response = await this.sendTabMessageWithRetry(tabId, { type: 'GET_JOB_DETAIL' });
-        }
+        const tab = await this.createTabWithRetry({ url: job.url, active: false });
+        tabId = tab.id;
+        await this.sleep(4000);
+        response = await this.sendTabMessageWithRetry(tabId, { type: 'GET_JOB_DETAIL' });
 
         if ((!response || response.code === 'ANTI_BOT') && tabId) {
           const currentTab = await chrome.tabs.get(tabId).catch(() => null);
@@ -3555,13 +3660,8 @@ class JobHunterService {
             platform: '51job',
             sourceTabId: tabId,
             currentUrl,
-            duplicateFromSource: reusedSearchTab
+            duplicateFromSource: false
           });
-
-          if (reusedSearchTab) {
-            await this.recover51JobSearchTab(searchTabId);
-            reusedSearchTab = false;
-          }
 
           if (verificationResult && verificationResult.verified) {
             tabId = verificationResult.validationTabId || tabId;
@@ -3602,11 +3702,7 @@ class JobHunterService {
         job.detailErrorCode = 'detail_fetch_exception';
       } finally {
         if (tabId) {
-          if (reusedSearchTab) {
-            await this.recover51JobSearchTab(searchTabId);
-          } else {
-            try { await chrome.tabs.remove(tabId); } catch (e) { /* ignore */ }
-          }
+          try { await chrome.tabs.remove(tabId); } catch (e) { /* ignore */ }
         }
       }
 

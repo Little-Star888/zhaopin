@@ -5,9 +5,17 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "check": "node --check server.js && node --check db.js && node --check delivery-stats.js && node --check feishu-client.js && node --check delivery-worker.js && node --check run_batch.js"
+    "check": "node --check server.js && node --check db.js && node --check delivery-stats.js && node --check feishu-client.js && node --check delivery-worker.js && node --check company-normalizer.js && node --check company-profile-fetcher.js && node --check company-enrichment-worker.js && node --check company-enrichment-stats.js && node --check backfill_company_fields_to_feishu.js && node --check run_batch.js && node --check clear_feishu_table.js && node --check reset_validation_state.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0"
+    "better-sqlite3": "^11.10.0",
+    "docx": "^9.6.1",
+    "formidable": "^3.5.4",
+    "mammoth": "^1.12.0",
+    "marked": "^17.0.5",
+    "openai": "^6.33.0",
+    "pdf-parse": "^2.4.5",
+    "puppeteer-core": "^24.40.0",
+    "turndown": "^7.2.2"
   }
 }

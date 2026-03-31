@@ -19,7 +19,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     try {
       switch (request.type) {
         case 'CHECK_STATUS':
-          sendResponse({ success: true, ready: true });
+          sendResponse({
+            success: true,
+            ready: true,
+            securityCheck: isSecurityCheckPage(),
+            url: location.href
+          });
           break;
 
         case 'SCRAPE_JOBS':
@@ -51,18 +56,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // 搜索职位
-async function scrapeJobs(keyword, cityCode, pageSize = 30, experience = '102', page = 1) {
+async function scrapeJobs(keyword, cityCode, pageSize = 30, experience = '', page = 1) {
+  if (isSecurityCheckPage()) {
+    return buildSecurityCheckResponse();
+  }
+
   const timestamp = Date.now();
-  
+
   const params = new URLSearchParams({
     scene: '1',
     query: keyword,
     city: cityCode,
     page: String(page),
     pageSize: pageSize.toString(),
-    experience: experience,  // 从参数传入，默认1-3年
     _: timestamp.toString()
   });
+
+  if (typeof experience === 'string' && experience.trim()) {
+    params.set('experience', experience.trim());
+  }
 
   const url = `https://www.zhipin.com/wapi/zpgeek/search/joblist.json?${params.toString()}`;
   log('Fetching:', url);
@@ -85,7 +97,16 @@ async function scrapeJobs(keyword, cityCode, pageSize = 30, experience = '102', 
       // 详细错误信息，包含错误码便于反爬检测
       const errorMsg = data.message || 'Unknown';
       console.error(`[BossScraper] API error: code=${data.code}, message=${errorMsg}`);
-      
+      const domFallback = await scrapeJobsFromDOM();
+      if (domFallback.success && Array.isArray(domFallback.data) && domFallback.data.length > 0) {
+        console.warn('[BossScraper] API failed, DOM fallback succeeded');
+        return domFallback;
+      }
+
+      if (isSecurityCheckPage()) {
+        return buildSecurityCheckResponse(errorMsg, data.code);
+      }
+
       return {
         success: false,
         error: `API error: ${errorMsg} (code: ${data.code})`,
@@ -96,8 +117,20 @@ async function scrapeJobs(keyword, cityCode, pageSize = 30, experience = '102', 
     const jobList = data.zpData?.jobList || [];
     log(`Found ${jobList.length} jobs`);
 
-    const jobs = jobList.map(job => ({
+    const domLinkMap = buildBossDomLinkMap();
+    console.log(
+      `[BossScraper] Link mapping for page ${page}: domLinks=${domLinkMap.size}, apiJobs=${jobList.length}`
+    );
+    const jobs = jobList.map(job => {
+      const domMatchedUrl = domLinkMap.get(buildBossDomLookupKey({
+        title: job.jobName,
+        company: job.brandName,
+        salary: job.salaryDesc
+      })) || '';
+
+      return ({
       encryptJobId: job.encryptJobId,
+      encryptBrandId: job.encryptBrandId || null,
       jobName: job.jobName,
       salaryDesc: job.salaryDesc,
       locationName: job.locationName || job.cityName || '',
@@ -112,8 +145,10 @@ async function scrapeJobs(keyword, cityCode, pageSize = 30, experience = '102', 
       brandStageName: job.brandStageName || '',
       brandScaleName: job.brandScaleName || '',
       securityId: job.securityId || '',  // 用于获取详情
-      lid: job.lid || ''  // 用于获取详情
-    }));
+      lid: job.lid || '',  // 用于获取详情
+      url: domMatchedUrl
+    });
+    });
 
     return {
       success: true,
@@ -124,11 +159,203 @@ async function scrapeJobs(keyword, cityCode, pageSize = 30, experience = '102', 
 
   } catch (error) {
     console.error('[BossScraper] Fetch error:', error);
+    const domFallback = await scrapeJobsFromDOM();
+    if (domFallback.success && Array.isArray(domFallback.data) && domFallback.data.length > 0) {
+      console.warn('[BossScraper] Fetch failed, DOM fallback succeeded');
+      return domFallback;
+    }
     return {
       success: false,
       error: error.message
     };
   }
+}
+
+function normalizeText(value) {
+  return (value || '').replace(/\s+/g, ' ').trim();
+}
+
+function isSecurityCheckPage() {
+  const href = window.location.href || '';
+  const bodyText = normalizeText(document.body?.innerText || '');
+  return href.includes('_security_check') ||
+    /环境存在异常|安全验证|请完成验证|验证后继续访问/.test(bodyText);
+}
+
+function buildSecurityCheckResponse(message = 'security_check_required', code = 'security_check') {
+  return {
+    success: false,
+    error: `Security check required: ${message}`,
+    code
+  };
+}
+
+async function waitForJobCards(timeoutMs = 10000) {
+  const selectors = getBossJobCardSelectors();
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (isSecurityCheckPage()) {
+      return false;
+    }
+    if (selectors.some((selector) => document.querySelector(selector))) {
+      return true;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return selectors.some((selector) => document.querySelector(selector));
+}
+
+function getBossJobCardSelectors() {
+  return [
+    '.job-card-wrapper',
+    '.job-list-box .job-card-wrapper',
+    '.search-job-result .job-card-wrapper',
+    '[ka="search_list"] .job-card-wrapper',
+    '.rec-job-list .job-card-wrapper',
+    '.job-card-box'
+  ];
+}
+
+function extractBossJobId(url = '') {
+  const match = url.match(/job_detail\/([^?./]+)(?:\.html)?/);
+  return match ? match[1] : '';
+}
+
+function extractBossQueryValue(link, key) {
+  try {
+    const parsed = new URL(link, window.location.origin);
+    return parsed.searchParams.get(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function buildBossDomLookupKey({ title = '', company = '', salary = '' }) {
+  return [normalizeText(title), normalizeText(company), normalizeText(salary)].join('::');
+}
+
+function buildBossDomLinkMap() {
+  const map = new Map();
+  const selectors = getBossJobCardSelectors();
+  let cards = [];
+  for (const selector of selectors) {
+    cards = Array.from(document.querySelectorAll(selector));
+    if (cards.length > 0) break;
+  }
+
+  for (const card of cards) {
+    const title = normalizeText(
+      card.querySelector('.job-title')?.textContent ||
+      card.querySelector('[class*="job-title"]')?.textContent ||
+      card.querySelector('a[ka*="job"]')?.textContent ||
+      ''
+    );
+    const company = normalizeText(
+      card.querySelector('.company-name')?.textContent ||
+      card.querySelector('[class*="company-name"]')?.textContent ||
+      ''
+    );
+    const salary = normalizeText(
+      card.querySelector('.salary')?.textContent ||
+      card.querySelector('[class*="salary"]')?.textContent ||
+      ''
+    );
+    const url = card.querySelector('a.job-card-left')?.href ||
+      card.querySelector('a[href*="job_detail"]')?.href ||
+      card.querySelector('.job-card-body a')?.href ||
+      '';
+    const key = buildBossDomLookupKey({ title, company, salary });
+    if (title && company && url && !map.has(key)) {
+      map.set(key, url);
+    }
+  }
+
+  if (map.size > 0) {
+    console.log('[BossScraper] DOM href samples:', Array.from(map.entries()).slice(0, 3));
+  }
+
+  return map;
+}
+
+function parseBossJobCard(card) {
+  const titleEl = card.querySelector('.job-title') ||
+    card.querySelector('[class*="job-title"]') ||
+    card.querySelector('a[ka*="job"]');
+  const title = normalizeText(titleEl?.textContent);
+  const linkEl = card.querySelector('a.job-card-left') ||
+    card.querySelector('a[href*="job_detail"]') ||
+    card.querySelector('.job-card-body a');
+  const url = linkEl?.href || '';
+  const companyEl = card.querySelector('.company-name') ||
+    card.querySelector('[class*="company-name"]') ||
+    card.querySelector('.boss-name + .company-name');
+  const salaryEl = card.querySelector('.salary') || card.querySelector('[class*="salary"]');
+  const areaEl = card.querySelector('.job-area') || card.querySelector('[class*="job-area"]');
+  const infoItems = Array.from(card.querySelectorAll('.job-info .tag-list li, .job-info li'))
+    .map((item) => normalizeText(item.textContent))
+    .filter(Boolean);
+  const skillItems = Array.from(card.querySelectorAll('.job-card-footer .tag-list li, .job-card-footer .tag-list span, .job-card-tags span, .tags li'))
+    .map((item) => normalizeText(item.textContent))
+    .filter(Boolean)
+    .slice(0, 6);
+  const bossEl = card.querySelector('.boss-name') || card.querySelector('[class*="boss-name"]');
+  const brandName = normalizeText(companyEl?.textContent);
+  if (!title || !brandName) {
+    return null;
+  }
+  return {
+    encryptJobId: extractBossJobId(url),
+    encryptBrandId: extractBossQueryValue(url, 'encryptBrandId') || null,
+    jobName: title,
+    salaryDesc: normalizeText(salaryEl?.textContent),
+    locationName: normalizeText(areaEl?.textContent),
+    areaDistrict: '',
+    jobExperience: infoItems[0] || '',
+    jobDegree: infoItems[1] || '',
+    brandName,
+    bossName: normalizeText(bossEl?.textContent),
+    bossTitle: '',
+    skills: skillItems,
+    brandIndustry: '',
+    brandStageName: '',
+    brandScaleName: infoItems[2] || '',
+    securityId: extractBossQueryValue(url, 'securityId') || '',
+    lid: extractBossQueryValue(url, 'lid') || '',
+    url
+  };
+}
+
+async function scrapeJobsFromDOM() {
+  const ready = await waitForJobCards();
+  if (!ready) {
+    if (isSecurityCheckPage()) {
+      return buildSecurityCheckResponse();
+    }
+    return { success: false, error: 'Boss DOM fallback found no job cards' };
+  }
+
+  const selectors = getBossJobCardSelectors();
+  let cards = [];
+  for (const selector of selectors) {
+    cards = Array.from(document.querySelectorAll(selector));
+    if (cards.length > 0) break;
+  }
+
+  const jobs = cards
+    .map((card) => parseBossJobCard(card))
+    .filter(Boolean);
+
+  if (jobs.length === 0) {
+    return { success: false, error: 'Boss DOM fallback parsed 0 valid jobs' };
+  }
+
+  return {
+    success: true,
+    data: jobs,
+    total: jobs.length,
+    page: 1,
+    source: 'dom'
+  };
 }
 
 // 获取职位详情（双端点降级方案 - GitHub最佳实践）

@@ -2074,6 +2074,27 @@ function triggerDownload(blob, filename) {
 /* --- HTML 导出模板（Constructivism 风格，与 WP3 后端共用） --- */
 
 const RESUME_DOCUMENT_CSS = `
+@page {
+  size: A4;
+  margin: 15mm;
+}
+@media print {
+  .resume-sheet {
+    page-break-after: auto;
+  }
+  .resume-section {
+    page-break-inside: avoid;
+  }
+  h1, h2, h3 {
+    page-break-after: avoid;
+  }
+  .resume-block {
+    page-break-inside: avoid;
+  }
+  .resume-list li {
+    page-break-inside: avoid;
+  }
+}
   :root {
     --resume-bg: #f7f3ec;
     --resume-ink: #1a1a1a;
@@ -3453,7 +3474,15 @@ async function loadSplitResume() {
     const resume = data.resume;
 
     if (!resume) {
-      viewEl.innerHTML = '<div class="resume-empty">暂无简历内容，请先上传简历</div>';
+      viewEl.innerHTML = `
+        <div class="resume-empty">
+          <p>暂无简历内容</p>
+          <button class="upload-btn-simple" id="sp-btn-upload-resume">📄 上传简历</button>
+        </div>`;
+      const uploadBtn = document.getElementById('sp-btn-upload-resume');
+      if (uploadBtn) {
+        uploadBtn.addEventListener('click', () => triggerFileInput());
+      }
       return;
     }
 
@@ -3665,6 +3694,7 @@ function loadSplitRightAssistant(jobId) {
             <span class="ai-dt-toggle-slider"></span>
           </label>
         </div>
+        <button class="res-btn res-btn--ai" id="sp-btn-run-deep-think" style="margin-top:8px; width:100%;">🧠 运行深度思考</button>
         <div class="ai-secondary-model-section" id="sp-secondary-model">
           <button class="ai-secondary-model-toggle" id="sp-sec-model-toggle" type="button">▶ 第二模型配置</button>
           <div class="ai-secondary-model-body" id="sp-sec-model-body" style="display:none">
@@ -3783,6 +3813,25 @@ function hideAITyping() {
 }
 
 /**
+ * 格式化深度思考结果为聊天回复
+ */
+function formatDeepThinkReply(dtData) {
+  const result = dtData.result || dtData;
+  if (typeof result === 'string') return result;
+  const parts = [];
+  if (result.final_answer) parts.push(result.final_answer);
+  if (result.summary) parts.push(result.summary);
+  if (result.analysis) parts.push(result.analysis);
+  if (result.rounds && Array.isArray(result.rounds)) {
+    parts.push('**思考过程：**');
+    result.rounds.forEach((r, i) => {
+      if (r.reasoning) parts.push(`第${i+1}轮：${r.reasoning}`);
+    });
+  }
+  return parts.length > 0 ? parts.join('\n\n') : JSON.stringify(result, null, 2);
+}
+
+/**
  * 绑定 AI 助手面板的所有事件
  * @param {number} jobId 目标岗位 ID
  */
@@ -3810,11 +3859,52 @@ function bindSplitRightAssistantEvents(jobId) {
     if (sendBtn) sendBtn.disabled = true;
 
     try {
-      const data = await chatWithAIAssistant(jobId, text, aiConversationHistory);
+      // 检查深度思考开关
+      const dtToggle = document.getElementById('sp-dt-toggle');
+      const deepThinkEnabled = dtToggle && dtToggle.checked;
+      let data;
+      if (deepThinkEnabled) {
+        // 深度思考模式
+        const dtData = await deepThink(text, jobId);
+        data = {
+          reply: formatDeepThinkReply(dtData),
+          resume_updated: false,
+        };
+      } else {
+        data = await chatWithAIAssistant(jobId, text, aiConversationHistory);
+      }
       hideAITyping();
       const reply = data.reply || data.message || data.response || '（无回复）';
       addAIResponseMessage(reply);
       aiConversationHistory.push({ role: 'assistant', text: reply });
+
+      // 处理 AI 修改简历的写回
+      if (data.resume_updated && data.resume_updated_content_md) {
+        currentResumeDraftMd = data.resume_updated_content_md;
+        if (currentResume) {
+          currentResume.content_md = data.resume_updated_content_md;
+        }
+        // 重新渲染中栏简历预览
+        const spView = document.getElementById('sp-resume-view');
+        if (spView) {
+          spView.innerHTML = renderResumePreviewShell(currentResumeDraftMd, currentResumeTemplate, { editable: false, viewMode: 'split' });
+          initializeResumePreviewShells(spView);
+        }
+        // 同步编辑区
+        const spEdit = document.getElementById('sp-resume-edit');
+        if (spEdit) {
+          const textarea = spEdit.querySelector('textarea');
+          if (textarea) textarea.value = currentResumeDraftMd;
+          const editPreview = spEdit.querySelector('.resume-edit-dual__preview');
+          if (editPreview) {
+            editPreview.innerHTML = renderResumePreviewShell(currentResumeDraftMd, currentResumeTemplate, { editable: true, viewMode: 'split' });
+            initializeResumePreviewShells(spEdit);
+          }
+        }
+        // 保存到后端
+        updateResumeContent(currentResumeDraftMd).catch(() => {});
+        addAIResponseMessage('✅ 简历已根据 AI 建议更新，请查看中栏', '系统');
+      }
     } catch (err) {
       hideAITyping();
       addAIResponseMessage('请求失败: ' + err.message, '系统');
@@ -3926,6 +4016,12 @@ function bindSplitRightAssistantEvents(jobId) {
         spDtToggle.checked = !spDtToggle.checked;
       }
     });
+  }
+
+  // 运行深度思考按钮
+  const runDtBtn = document.getElementById('sp-btn-run-deep-think');
+  if (runDtBtn) {
+    runDtBtn.addEventListener('click', () => handleDeepThink(runDtBtn, 'split'));
   }
 
   // 第二模型折叠 + 保存
