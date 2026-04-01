@@ -40,8 +40,8 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["zhaopin-main-world.js"],
-      "matches": ["https://*.zhaopin.com/*"]
+      "resources": ["zhaopin-main-world.js", "boss-stealth.js"],
+      "matches": ["https://*.zhaopin.com/*", "https://www.zhipin.com/*"]
     }
   ],
   "action": {

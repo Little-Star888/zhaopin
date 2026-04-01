@@ -38,12 +38,14 @@ const CONFIG = {
     '机器人产品经理',
     '大模型产品经理'
   ],
-  MAX_JOBS_PER_CITY: 3,  // 每个城市最多采集3条（降低频率防反爬）
+  // Boss 批量采集策略（分批 3 条、持续翻完）
+  BOSS_BATCH_SIZE: 3,              // 每次列表请求固定 pageSize = 3
+  BOSS_RUN_UNTIL_EXHAUSTED: true,  // 持续翻页直到无新结果
+  MAX_LIST_PAGES_PER_RUN: 0,       // 0 = 不限页数，配合 BOSS_RUN_UNTIL_EXHAUSTED
   
   // 经验要求代码：101=应届生, 102=1-3年, 103=3-5年, 104=5-10年, 105=10年以上
   EXPERIENCE: '102',  // 默认1-3年
   JOB_FILTER_MODE: 'general_pm',
-  MAX_LIST_PAGES_PER_RUN: 3,
   
   // 反爬自适应策略配置
   ANTI_CRAWL: {
@@ -85,7 +87,7 @@ const CONFIG = {
 
   // 批次调度配置
   BATCH: {
-    MAX_DETAIL_REQUESTS_PER_RUN: 3  // 单次任务最多获取3条详情
+    MAX_DETAIL_REQUESTS_PER_RUN: 0  // 0 = unlimited（不限详情预算）
   },
 
   // P4: 控制面地址配置（可通过环境变量或手动修改）
@@ -103,14 +105,14 @@ const CONFIG = {
 const RUNTIME_CONFIG_DEFAULTS = {
   EXPERIENCE: '',
   JOB_FILTER_MODE: CONFIG.JOB_FILTER_MODE,
-  MAX_LIST_PAGES_PER_RUN: 0,
-  MAX_LIST_PAGE_SIZE: 30,
-  MAX_DETAIL_REQUESTS_PER_RUN: 0,
+  MAX_LIST_PAGES_PER_RUN: 0,        // 0 = unlimited（配合 BOSS_RUN_UNTIL_EXHAUSTED）
+  MAX_LIST_PAGE_SIZE: CONFIG.BOSS_BATCH_SIZE,  // 使用 BOSS_BATCH_SIZE
+  MAX_DETAIL_REQUESTS_PER_RUN: 0,   // 0 = unlimited
   EXP_HARD_EXCLUDE_SOURCE: '',
   deliveryEnabled: false,
   // 智联列表分页参数（可通过 runtime_config / popup 配置面板调整）
   MAX_LIST_PAGES: 1,              // 单次任务最多翻 N 页（默认 1，即只抓 p1）
-  DETAIL_BUDGET_PER_RUN: 3,       // 单次任务详情预算
+  DETAIL_BUDGET_PER_RUN: 0,       // 0 = unlimited（不限详情预算）
   DETAIL_REQUEST_INTERVAL_MS: 3000 // 详情请求间隔（毫秒）
 };
 
@@ -507,7 +509,7 @@ class JobHunterService {
     });
     
     console.log(
-      `[JobHunter] Service initialized | CODE_VERSION=${CODE_VERSION} | PIPELINE_VERSION=${PIPELINE_VERSION} | JOB_FILTER_MODE=${this.getJobFilterMode()} | MAX_LIST_PAGES_PER_RUN=${this.getMaxListPagesPerRun()} | MAX_LIST_PAGE_SIZE=${this.getMaxListPageSize()}`
+      `[JobHunter] Service initialized | CODE_VERSION=${CODE_VERSION} | PIPELINE_VERSION=${PIPELINE_VERSION} | JOB_FILTER_MODE=${this.getJobFilterMode()} | BOSS_BATCH_SIZE=${CONFIG.BOSS_BATCH_SIZE} | BOSS_RUN_UNTIL_EXHAUSTED=${CONFIG.BOSS_RUN_UNTIL_EXHAUSTED} | MAX_LIST_PAGES_PER_RUN=${this.getMaxListPagesPerRun()} | MAX_LIST_PAGE_SIZE=${this.getMaxListPageSize()}`
     );
   }
 
@@ -1070,9 +1072,9 @@ class JobHunterService {
       const searchResult = await this.scrapeJobListPages(tab.id, {
         keyword,
         cityCode: city.code,
-        pageSize: this.getMaxListPageSize(),
+        pageSize: CONFIG.BOSS_BATCH_SIZE,
         experience: this.getExperienceCode(),
-        maxPagesOverride: isManualTask ? 1 : null
+        maxPagesOverride: CONFIG.BOSS_RUN_UNTIL_EXHAUSTED ? 0 : null
       });
 
       // 反爬检测
@@ -1224,19 +1226,17 @@ class JobHunterService {
         }
       }
 
-      // 搜索后延迟（手动模式：3-5分钟；自动模式：原有策略）
+      // 搜索后延迟：批量模式使用较短延迟
       if (!this.isRunning) {
         console.log(`[JobHunter] Stopped by user before search cooldown, saving partial results`);
       } else {
-        // 手动模式冷却窗口：3-5分钟（收编原有手动绕过冷却逻辑为正式配置）
-        const MANUAL_COOLDOWN_MS = (3 + Math.random() * 2) * 60 * 1000;
-        const searchCooldown = isManualTask ? MANUAL_COOLDOWN_MS : (this.currentDelay + Math.random() * 2000);
+        const searchCooldown = this.currentDelay + Math.random() * 2000;
         console.log(`[JobHunter] ⏱️ Cooling down ${(searchCooldown/1000).toFixed(1)}s after search (source: ${this.crawlState.source})...`);
         await this.sleep(searchCooldown);
       }
 
       // 7. 获取详情（先去重，再应用预算）
-      const detailBudget = isManualTask ? 3 : this.getMaxDetailRequestsPerRun();
+      const detailBudget = this.getMaxDetailRequestsPerRun();
       const maxDetails = detailBudget === 0
         ? detailCandidates.length
         : Math.min(detailCandidates.length, detailBudget);

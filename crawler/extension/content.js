@@ -2,6 +2,14 @@
  * Content Script - 在Boss直聘页面中运行
  */
 
+// 注入反 CDP 检测脚本到 main world（必须尽早执行）
+try {
+  const stealthScript = document.createElement('script');
+  stealthScript.src = chrome.runtime.getURL('boss-stealth.js');
+  (document.head || document.documentElement).prepend(stealthScript);
+  stealthScript.onload = () => stealthScript.remove();
+} catch (_) { /* ignore */ }
+
 // 日志开关（调试时设为true，生产环境设为false）
 const DEBUG = false;
 
@@ -56,7 +64,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // 搜索职位
-async function scrapeJobs(keyword, cityCode, pageSize = 30, experience = '', page = 1) {
+async function scrapeJobs(keyword, cityCode, pageSize = 3, experience = '', page = 1) {
   if (isSecurityCheckPage()) {
     return buildSecurityCheckResponse();
   }
