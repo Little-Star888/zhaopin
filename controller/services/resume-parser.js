@@ -79,8 +79,13 @@ async function parseResumeToMarkdown(filePath, mimeType) {
  * @returns {Promise<string>} Markdown 文本
  */
 async function parseDocx(filePath) {
-  // Step 1: DOCX → HTML (mammoth)
-  const result = await mammoth.convertToHtml({ path: filePath });
+  // Step 1: DOCX → HTML (mammoth) — 显式处理图片，禁止 base64 内联
+  const result = await mammoth.convertToHtml(
+    { path: filePath },
+    {
+      convertImage: mammoth.images.imgElement(() => ({ src: '' }))
+    }
+  );
 
   if (result.messages && result.messages.length > 0) {
     console.warn('[resume-parser] mammoth warnings:', result.messages);
@@ -88,7 +93,24 @@ async function parseDocx(filePath) {
 
   // Step 2: HTML → Markdown (turndown)
   const markdown = turndownService.turndown(result.value);
-  return markdown;
+
+  // Step 3: 清洗 Markdown — 去除 base64 残留、页脚、模板污染
+  return sanitizeResumeMarkdown(markdown);
+}
+
+/**
+ * 清洗简历 Markdown 内容
+ * 去除 base64 图片数据、页脚残留、模板 artefacts
+ */
+function sanitizeResumeMarkdown(md) {
+  return String(md || '')
+    .replace(/!\[.*?\]\(data:image\/[^)]+\)/g, '')
+    .replace(/<img[^>]*src="data:image\/[^"]+"[^>]*\/?>/gi, '')
+    .replace(/^\s*\|\s*PAGE\s*$/gim, '')
+    .replace(/\(data:image\/[^)]{20,}\)/g, '')
+    .replace(/data:image\/[a-z]+;base64,[A-Za-z0-9+/=]{50,}/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**

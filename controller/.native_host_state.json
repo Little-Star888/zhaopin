@@ -171,10 +171,14 @@
     "dashboard-1775008422841-15ly5m": {
       "openedAt": 1775008422890,
       "source": "dashboard"
+    },
+    "dashboard-1775013188533-c4jcib": {
+      "openedAt": 1775013188601,
+      "source": "dashboard"
     }
   },
   "activeCrawlCount": 0,
   "ownedPid": 1425757,
   "lastStartedAt": 1774746574337,
-  "lastEventAt": 1775008422890
+  "lastEventAt": 1775013188601
 }

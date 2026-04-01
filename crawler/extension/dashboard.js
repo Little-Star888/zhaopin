@@ -3515,6 +3515,7 @@ function loadSplitCenterResume() {
           `).join('')}
         </select>
       </label>
+      <button class="res-btn btn-outline" id="sp-btn-upload" title="上传简历文件(.md/.txt/.json/.docx)">上传简历</button>
       <div class="export-dropdown" id="sp-export-dropdown">
         <button class="res-btn res-btn--export btn-export" id="sp-btn-export-resume"
                 ${!currentResume ? 'disabled title="请先上传简历"' : ''}>
@@ -3527,7 +3528,7 @@ function loadSplitCenterResume() {
           <button data-format="docx">Word (.docx)</button>
         </div>
       </div>
-      <button class="toolbar-btn primary" id="sp-btn-ai-toggle">🤖 AI 优化</button>
+      <button class="btn-ai-vertical" id="sp-btn-ai-toggle" title="AI 助手">AI</button>
     </div>
     <div id="sp-resume-view" class="resume-dual-mode__view"></div>
     <div id="sp-resume-edit" class="resume-dual-mode__edit" style="display:none"></div>
@@ -3722,14 +3723,20 @@ function bindSplitCenterEvents() {
     });
   }
 
-  // AI优化 切换按钮
+  // 上传按钮
+  const spUploadBtn = document.getElementById('sp-btn-upload');
+  if (spUploadBtn) {
+    spUploadBtn.addEventListener('click', () => triggerFileInput());
+  }
+
+  // AI 切换按钮（竖向）
   const aiToggleBtn = document.getElementById('sp-btn-ai-toggle');
   if (aiToggleBtn) {
     aiToggleBtn.addEventListener('click', () => {
       document.body.classList.toggle('ai-active');
       const isActive = document.body.classList.contains('ai-active');
-      aiToggleBtn.textContent = isActive ? '✕ 关闭 AI' : '🤖 AI 优化';
-      aiToggleBtn.classList.toggle('primary', !isActive);
+      aiToggleBtn.textContent = isActive ? '✕' : 'AI';
+      aiToggleBtn.classList.toggle('is-active', isActive);
     });
   }
 }

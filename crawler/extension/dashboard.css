@@ -2261,6 +2261,36 @@ a {
     opacity: 0.6;
 }
 
+/* AI 竖向按钮 */
+.btn-ai-vertical {
+    writing-mode: vertical-rl;
+    text-orientation: upright;
+    padding: 12px 6px;
+    min-height: 48px;
+    width: 32px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s, transform 0.15s;
+    flex-shrink: 0;
+}
+.btn-ai-vertical:hover {
+    background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+    transform: scale(1.05);
+}
+.btn-ai-vertical.is-active {
+    background: #374151;
+    color: #f3f4f6;
+}
+
 /* AI 按钮加载状态 */
 .res-btn--ai.is-loading,
 .btn-ai-match.is-loading {
