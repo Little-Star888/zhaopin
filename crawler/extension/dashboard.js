@@ -3803,7 +3803,7 @@ function loadSplitRightAssistant(jobId) {
         <div class="ai-messages" id="aiMessages">
           <div class="message ai">
             <div class="message-avatar">🤖</div>
-            <div style="flex: 1;">
+            <div class="message-body">
               <div class="message-content">
                 <div class="message-sender">AI 助手</div>
                 <div class="structured-content">
@@ -3883,7 +3883,7 @@ function addAIUserMessage(text) {
   messageDiv.className = 'message user';
   messageDiv.innerHTML = `
     <div class="message-avatar">👤</div>
-    <div style="flex: 1;">
+    <div class="message-body">
       <div class="message-content">
         <div class="message-sender">你</div>
         ${escapeHtml(text)}
@@ -3909,7 +3909,7 @@ function addAIResponseMessage(text, sender = 'AI 助手') {
   messageDiv.className = 'message ai';
   messageDiv.innerHTML = `
     <div class="message-avatar">🤖</div>
-    <div style="flex: 1;">
+    <div class="message-body">
       <div class="message-content">
         <div class="message-sender">${escapeHtml(sender)}</div>
         <div class="structured-content">${text.replace(/\n/g, '<br>')}</div>
@@ -3941,6 +3941,12 @@ function hideAITyping() {
 /**
  * 格式化深度思考结果为结构化卡片
  */
+function formatDeepThinkItem(item) {
+  if (typeof item === 'string') return item;
+  if (!item || typeof item !== 'object') return String(item || '');
+  return item.content || item.text || item.issue || item.summary || item.reason || item.message || JSON.stringify(item, null, 2);
+}
+
 function formatDeepThinkReply(dtData) {
   if (!dtData) return '深度思考执行失败';
 
@@ -3950,9 +3956,13 @@ function formatDeepThinkReply(dtData) {
   const modeLabel = { single: '单模型', dual: '双模型', auto: '自动' };
   const stopLabel = {
     max_rounds: '达到最大轮次',
-    no_new_info: '信息收敛',
+    no_new_info: '连续多轮无新增信息',
     api_error: 'API错误',
-    critic_stop: '评审建议停止'
+    critic_stop: '评审建议停止',
+    critic_suggests_stop: '评审认为信息已充分',
+    stable_conclusions: '结论已稳定',
+    config_error: '配置错误',
+    no_primary_model: '未配置主模型'
   };
 
   const mode = modeLabel[result.mode_used] || result.mode_used || '未知';
@@ -3962,8 +3972,8 @@ function formatDeepThinkReply(dtData) {
   const answer = result.final_answer || result.answer || result.summary || '';
 
   const state = result.state || {};
-  const conclusions = (state.verified_conclusions || []).map(c => c.text || c).filter(Boolean);
-  const openQuestions = (state.open_questions || []).filter(Boolean);
+  const conclusions = (state.verified_conclusions || []).map(c => formatDeepThinkItem(c)).filter(Boolean);
+  const openQuestions = (state.open_questions || []).map(q => formatDeepThinkItem(q)).filter(Boolean);
   const logs = result.logs || [];
 
   // 如果没有结构化数据，回退到纯文本拼接
@@ -4021,17 +4031,43 @@ function formatDeepThinkReply(dtData) {
   }
 
   if (logs.length > 0) {
+    // 按轮次分组
+    const roundMap = new Map();
+    logs.forEach(log => {
+      const round = (typeof log === 'object' && log.round) || 0;
+      if (!roundMap.has(round)) roundMap.set(round, []);
+      roundMap.get(round).push(log);
+    });
+
+    const totalRoundCount = roundMap.size;
     html += `<div class="dt-card-section dt-trace-section">
       <button class="dt-trace-toggle" onclick="this.parentElement.classList.toggle('dt-trace-open')">
-        ▶ 思考过程 (${logs.length} 条记录)
+        ▶ 思考过程 (${totalRoundCount} 轮, ${logs.length} 条记录)
       </button>
-      <div class="dt-trace-body">
-        ${logs.map(log => {
-          const msg = typeof log === 'string' ? log : (log.message || log.summary || JSON.stringify(log));
-          return `<div class="dt-trace-item">${escapeHtml(msg)}</div>`;
-        }).join('')}
-      </div>
-    </div>`;
+      <div class="dt-trace-body">`;
+
+    for (const [roundNum, roundLogs] of roundMap) {
+      const roundLabel = roundNum === 0 ? '初始化' : `第 ${roundNum} 轮`;
+      html += `<div class="dt-round-group">
+        <div class="dt-round-header" onclick="this.parentElement.classList.toggle('dt-round-open')">
+          ▶ ${roundLabel}
+        </div>
+        <div class="dt-round-body">`;
+
+      roundLogs.forEach(log => {
+        const phase = (typeof log === 'object' && log.phase) || '';
+        const phaseLabel = { analyst: '🔍 分析师', critic: '⚖️ 评审', summarizer: '📝 总结', init: '🚀 初始化', compress: '🗜️ 压缩' }[phase] || phase;
+        const msg = formatDeepThinkItem(log);
+        const levelClass = (typeof log === 'object' && log.level === 'error') ? ' dt-trace-error' : '';
+        html += `<div class="dt-trace-item${levelClass}">`;
+        if (phaseLabel) html += `<span class="dt-trace-phase">${phaseLabel}</span> `;
+        html += `${escapeHtml(msg)}</div>`;
+      });
+
+      html += `</div></div>`;
+    }
+
+    html += `</div></div>`;
   }
 
   html += `</div>`;
@@ -4053,6 +4089,35 @@ function bindSplitRightAssistantEvents(jobId) {
   const spProvider = document.getElementById('sp-ai-provider');
 
   // 发送消息
+function shouldTriggerDeepThink(text, context) {
+  const msg = String(text || '').trim();
+  if (!msg) return false;
+
+  // 太短的消息不触发深度思考
+  if (msg.length < 10) return false;
+
+  // 常见问候语不触发
+  const greetings = ['你好', '您好', 'hi', 'hello', '在吗', '嗨', '你是谁', '谢谢', '好的', '嗯', 'ok', 'thanks', '再见', 'bye'];
+  if (greetings.includes(msg.toLowerCase())) return false;
+
+  // 简单疑问句不触发
+  if (msg.length < 20 && (msg.endsWith('？') || msg.endsWith('?'))) return false;
+
+  // 显式深度思考关键词 → 强制触发
+  const explicitKeywords = ['深度分析', '深度思考', '深入分析', '多轮推理', '全面分析', '详细拆解', '根本原因', '深入思考'];
+  if (explicitKeywords.some(k => msg.includes(k))) return true;
+
+  // 分析型关键词 + 足够长度 → 触发
+  const analysisKeywords = ['分析', '对比', '评估', '匹配', '差距', '优化', '策略', '建议', '改进', '诊断', '问题'];
+  const hasAnalysis = analysisKeywords.some(k => msg.includes(k));
+  if (hasAnalysis && msg.length >= 15) return true;
+
+  // 有岗位上下文且消息足够复杂 → 触发
+  if (context?.jobId && msg.length >= 40) return true;
+
+  return false;
+}
+
   async function sendAIMessage() {
     if (!aiInput) return;
     const text = aiInput.value.trim();
@@ -4070,8 +4135,10 @@ function bindSplitRightAssistantEvents(jobId) {
       // 检查深度思考开关
       const dtToggle = document.getElementById('sp-dt-toggle');
       const deepThinkEnabled = dtToggle && dtToggle.checked;
+      const dtContext = { jobId, resumeReady: !!currentResumeDraftMd };
+      const shouldDT = deepThinkEnabled && shouldTriggerDeepThink(text, dtContext);
       let data;
-      if (deepThinkEnabled) {
+      if (shouldDT) {
         // 能力检查
         const caps = window.__aiCapabilities || {};
         if (!caps.deep_think) {
@@ -4080,12 +4147,6 @@ function bindSplitRightAssistantEvents(jobId) {
           addAIResponseMessage('⚠️ 深度思考能力未就绪，请先在设置中配置AI模型。');
           return;
         }
-
-        // 构建上下文摘要
-        const contextSummary = aiConversationHistory
-          .slice(-6)
-          .map(m => `${m.role}: ${(m.text || '').substring(0, 200)}`)
-          .join('\n');
 
         // 深度思考模式
         const dtData = await deepThink(text, jobId);
@@ -4153,7 +4214,7 @@ function bindSplitRightAssistantEvents(jobId) {
         aiMessages.innerHTML = `
           <div class="message ai">
             <div class="message-avatar">🤖</div>
-            <div style="flex: 1;">
+            <div class="message-body">
               <div class="message-content">
                 <div class="message-sender">AI 助手</div>
                 <div class="structured-content">对话已清空。有什么可以帮你的吗？</div>
