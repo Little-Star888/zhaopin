@@ -279,6 +279,75 @@ export async function chatWithAIAssistant(jobId, message, conversationHistory = 
 }
 
 /**
+ * SSE 流式 AI 助手对话
+ * @param {number} jobId 岗位 ID
+ * @param {string} message 用户消息
+ * @param {Array} conversationHistory 对话历史
+ * @param {Function} onEvent SSE 事件回调 ({type, message, ...})
+ * @returns {Promise<Object>} 最终结果 (done event data)
+ */
+export async function chatWithAIAssistantStream(jobId, message, conversationHistory = [], onEvent) {
+  const check = await ensureControllerAvailable('request:/api/ai/assistant/stream');
+  if (!check.available) {
+    const err = new Error('后端未启动，请先启动 Controller');
+    err.errorType = check.errorType || 'CONTROLLER_UNREACHABLE';
+    if (check.extensionId) err.extensionId = check.extensionId;
+    throw err;
+  }
+
+  const response = await fetch(`${API_BASE}/api/ai/assistant/stream`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      job_id: jobId,
+      message,
+      conversation_history: conversationHistory,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`SSE 请求失败: ${response.status}`);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResult = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const event = JSON.parse(line.slice(6));
+          if (event.type === 'done') {
+            finalResult = event;
+          } else if (event.type === 'error') {
+            throw new Error(event.message || 'AI 处理失败');
+          } else if (onEvent) {
+            onEvent(event);
+          }
+        } catch (e) {
+          if (e.message && !e.message.includes('JSON')) throw e;
+        }
+      }
+    }
+  }
+
+  if (!finalResult) {
+    throw new Error('SSE 流结束但未收到完成事件');
+  }
+
+  return finalResult;
+}
+
+/**
  * AI 智能匹配
  * @param {number[]} jobIds 待匹配的岗位 ID 列表
  */

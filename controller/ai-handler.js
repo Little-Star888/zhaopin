@@ -468,6 +468,7 @@ function buildAssistantSystemPrompt({ bootstrapContext, currentJobId }) {
     '这三份 .md 文档在本轮请求中只会出现在上下文开头一次，你必须先基于它们理解身份、规范和长期记忆。',
     '之后你要优先和用户对话，只有在需要读取简历、岗位、数据库、技能文档、互联网网页或需要修改简历时，才调用工具。',
     '不要把所有工具都先跑一遍。优先基于已有上下文和用户消息判断，再按需调用工具。',
+    '如果简历内容和岗位信息已经在上下文中（标注"已预读"），直接使用这些内容，不要再调用 read_resume 或 read_current_job。',
     '工具使用采用渐进式披露：先看下面的摘要；若要细化某个工具用法，先调用 get_tool_guide。',
     '如果用户明确要求优化、改写、修改简历，你可以调用 update_resume 直接更新简历。',
     '如果用户只是咨询，不要修改简历。',
@@ -487,6 +488,52 @@ function buildAssistantSystemPrompt({ bootstrapContext, currentJobId }) {
    - 回复用自然语言，简洁友好
    - 如需展示修改内容，用代码块包裹
    - 不要在回复中暴露内部处理逻辑或JSON格式`,
+    `## 简历格式规范（必须严格遵守）
+当输出或修改简历时，必须使用以下固定格式，不允许使用其他 Markdown 写法：
+
+### 整体结构
+\`\`\`
+# 姓名
+
+个人简介/摘要（1-2句话）
+
+📞 电话 | ✉️ 邮箱 | 🔗 链接
+
+---
+
+## 求职意向
+期望职位：XXX | 期望城市：XXX | 期望薪资：XXX
+
+---
+
+## 工作经历
+
+### 公司名称 ｜ 时间范围
+**职位名称** · 地点
+
+- **【能力标签】** 具体职责描述和量化成果
+  项目示例：项目名称 —— 项目简述
+
+---
+
+## 教育经历
+
+### 学校名称 ｜ 时间范围
+**学位 · 专业**
+
+---
+
+## 技能特长
+- 技能类别：具体技能列表
+\`\`\`
+
+### 工作经历块规则
+1. 每家公司用 ### 三级标题，格式：\`### 公司名称 ｜ 起止时间\`
+2. 职位信息紧跟标题：\`**职位名称** · 地点\`
+3. 每条成就用能力标签开头：\`- **【标签】** 描述\`
+4. 项目示例缩进在对应成就下方
+5. 不要使用多层嵌套列表
+6. 量化结果优先（百分比、数字、指标）`,
     '工具摘要：',
     toolCatalog,
     bootstrapContext,
@@ -779,6 +826,118 @@ async function runAssistantLoop({ llmClient, systemPrompt, conversationHistory, 
 
   return {
     reply: '本轮工具调用达到上限，请把请求再收窄一点。',
+    suggestions: [],
+    resume_updated: resumeUpdated,
+    resume_updated_content_md: resumeUpdated ? latestResumeContent : '',
+    memory_update: { should_update: false, reason: '', content_md: '' },
+    tool_trace: toolTrace,
+  };
+}
+
+/**
+ * SSE 版助手循环 - 带进度回调
+ */
+async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversationHistory, userMessage, db, currentJobId, resume, onProgress }) {
+  const messages = [{ role: 'system', content: systemPrompt }];
+  messages.push(...conversationHistory);
+  messages.push({ role: 'user', content: userMessage });
+
+  let resumeUpdated = false;
+  let latestResumeContent = resume?.content_md || '';
+  const toolTrace = [];
+
+  for (let step = 0; step < ASSISTANT_MAX_TOOL_STEPS; step += 1) {
+    if (step > 0) {
+      onProgress({ type: 'phase', message: `第 ${step + 1} 轮思考...` });
+    }
+
+    const result = await llmClient.chat(messages);
+    if (result.error || !result.content) {
+      const errMsg = result.error?.message || 'AI 调用返回为空';
+      throw new Error(errMsg);
+    }
+
+    const parsed = extractJsonObject(result.content);
+    if (!parsed) {
+      return {
+        reply: String(result.content || '').trim(),
+        suggestions: [],
+        resume_updated: resumeUpdated,
+        resume_updated_content_md: resumeUpdated ? latestResumeContent : '',
+        memory_update: { should_update: false, reason: '', content_md: '' },
+        tool_trace: toolTrace,
+      };
+    }
+
+    if (parsed.action === 'tool_call' && parsed.tool) {
+      const toolName = parsed.tool;
+      const TOOL_LABELS = {
+        read_resume: '📄 正在读取简历...',
+        read_current_job: '📋 正在读取岗位信息...',
+        update_resume: '✏️ 正在修改简历...',
+        search_jobs_db: '🔍 正在搜索岗位...',
+        query_database: '🗃️ 正在查询数据...',
+        list_selected_jobs: '📌 正在读取收藏岗位...',
+        web_search: '🌐 正在搜索网络...',
+        fetch_url: '🔗 正在读取网页...',
+      };
+      onProgress({ type: 'tool', tool: toolName, message: TOOL_LABELS[toolName] || `🔧 正在执行 ${toolName}...` });
+
+      const toolResult = await executeAssistantTool({
+        db,
+        toolName,
+        args: parsed.arguments || {},
+        currentJobId,
+        resume,
+      });
+
+      if (toolResult?.resume_updated && toolResult?.content_md) {
+        resumeUpdated = true;
+        latestResumeContent = toolResult.content_md;
+        onProgress({ type: 'resume_updated', message: '✅ 简历已更新' });
+      }
+
+      toolTrace.push({
+        tool: toolName,
+        reason: String(parsed.reason || '').trim(),
+      });
+
+      messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
+      messages.push({
+        role: 'user',
+        content: `工具 ${toolName} 执行结果:\n${JSON.stringify(toolResult, null, 2)}`,
+      });
+
+      continue;
+    }
+
+    if (parsed.action === 'respond') {
+      onProgress({ type: 'phase', message: '✨ 生成回复中...' });
+      return {
+        reply: String(parsed.reply || '').trim(),
+        suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : [],
+        resume_updated: resumeUpdated || !!parsed.resume_updated,
+        resume_updated_content_md: resumeUpdated
+          ? latestResumeContent
+          : (parsed.resume_updated_content_md || ''),
+        memory_update: parsed.memory_update || { should_update: false, reason: '', content_md: '' },
+        tool_trace: toolTrace,
+      };
+    }
+
+    // Unknown action - treat content as reply
+    return {
+      reply: String(result.content || '').trim(),
+      suggestions: [],
+      resume_updated: resumeUpdated,
+      resume_updated_content_md: resumeUpdated ? latestResumeContent : '',
+      memory_update: { should_update: false, reason: '', content_md: '' },
+      tool_trace: toolTrace,
+    };
+  }
+
+  return {
+    reply: '已达到最大工具调用步数，请精简问题后重试。',
     suggestions: [],
     resume_updated: resumeUpdated,
     resume_updated_content_md: resumeUpdated ? latestResumeContent : '',
@@ -1146,10 +1305,27 @@ async function handleAssistantChat(req, res) {
       const currentJobId = Number(body.job_id) || null;
       const resume = resumeDb.getLatestResume();
       const bootstrapContext = readAIBootstrapContext();
+
+      // Auto-preread: inject resume + job into system prompt to avoid tool_call rounds
+      let prereadContext = '';
+      if (resume && resume.content_md) {
+        prereadContext += `\n\n## 当前简历内容（已预读，无需调用 read_resume）\n\`\`\`markdown\n${resume.content_md}\n\`\`\`\n`;
+      }
+      if (currentJobId) {
+        try {
+          const jobRow = db.prepare('SELECT title, company, description FROM scraped_jobs WHERE id = ?').get(currentJobId);
+          if (jobRow) {
+            prereadContext += `\n\n## 当前岗位信息（已预读，无需调用 read_current_job）\n- 岗位: ${jobRow.title}\n- 公司: ${jobRow.company}\n- 描述: ${(jobRow.description || '').slice(0, 1000)}\n`;
+          }
+        } catch (e) {
+          // ignore - model can still use read_current_job tool
+        }
+      }
+
       const systemPrompt = buildAssistantSystemPrompt({
         bootstrapContext,
         currentJobId,
-      });
+      }) + prereadContext;
       const conversationHistory = normalizeAssistantHistory(body.conversation_history);
       const assistantResult = await runAssistantLoop({
         llmClient,
@@ -1179,6 +1355,103 @@ async function handleAssistantChat(req, res) {
       console.error('[AIAssistant] 处理失败:', err.message);
       res.writeHead(500);
       res.end(JSON.stringify({ error: 'AI 助手失败：' + err.message }));
+    }
+  });
+}
+
+/**
+ * POST /api/ai/assistant/stream - SSE 流式 AI 助手
+ * 返回 text/event-stream，实时推送工具执行进度和最终回复
+ */
+async function handleAssistantChatStream(req, res) {
+  const chunks = [];
+  req.on('data', (chunk) => chunks.push(chunk));
+  req.on('end', async () => {
+    try {
+      const body = JSON.parse(Buffer.concat(chunks).toString());
+      const db = getDatabase();
+      const llmClient = createActiveLLMClient(db);
+      if (!llmClient) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '请先配置 AI 提供商' }));
+        return;
+      }
+
+      const message = String(body.message || '').trim();
+      if (!message) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '缺少 message' }));
+        return;
+      }
+
+      // SSE headers
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+      });
+
+      const sendEvent = (type, data) => {
+        res.write(`data: ${JSON.stringify({ type, ...data })}\n\n`);
+      };
+
+      const currentJobId = Number(body.job_id) || null;
+      const resume = resumeDb.getLatestResume();
+      const bootstrapContext = readAIBootstrapContext();
+      const systemPrompt = buildAssistantSystemPrompt({ bootstrapContext, currentJobId });
+
+      // Auto-preread context
+      let prereadContext = '';
+      if (resume && resume.content_md) {
+        prereadContext += `\n\n## 当前简历内容（已预读，无需调用 read_resume）\n\`\`\`markdown\n${resume.content_md}\n\`\`\`\n`;
+      }
+      if (currentJobId) {
+        try {
+          const jobRow = db.prepare('SELECT title, company, description FROM scraped_jobs WHERE id = ?').get(currentJobId);
+          if (jobRow) {
+            prereadContext += `\n\n## 当前岗位信息（已预读，无需调用 read_current_job）\n- 岗位: ${jobRow.title}\n- 公司: ${jobRow.company}\n- 描述: ${(jobRow.description || '').slice(0, 1000)}\n`;
+          }
+        } catch (e) { /* ignore */ }
+      }
+
+      const fullSystemPrompt = systemPrompt + prereadContext;
+      const conversationHistory = normalizeAssistantHistory(body.conversation_history);
+
+      sendEvent('phase', { message: '正在思考...' });
+
+      const assistantResult = await runAssistantLoopWithProgress({
+        llmClient,
+        systemPrompt: fullSystemPrompt,
+        conversationHistory,
+        userMessage: message,
+        db,
+        currentJobId,
+        resume,
+        onProgress: (event) => sendEvent(event.type, event),
+      });
+
+      const memoryResult = buildMemoryUpdateResult({
+        memory_update: assistantResult.memory_update,
+      });
+
+      sendEvent('done', {
+        success: true,
+        reply: sanitizeReply(assistantResult.reply),
+        suggestions: assistantResult.suggestions || [],
+        resume_updated: assistantResult.resume_updated,
+        resume_updated_content_md: assistantResult.resume_updated_content_md || '',
+        memory_updated: memoryResult.updated,
+        tool_trace: assistantResult.tool_trace || [],
+      });
+
+      res.end();
+    } catch (err) {
+      console.error('[AIAssistant:Stream] 处理失败:', err.message);
+      try {
+        res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`);
+      } catch (e) { /* ignore */ }
+      res.end();
     }
   });
 }
@@ -1700,6 +1973,7 @@ module.exports = {
   handleSaveConfig,
   handleOptimizeResume,
   handleAssistantChat,
+  handleAssistantChatStream,
   handleJobMatch,
   handleDeepThink,
   handleSaveDeepThinkConfig,

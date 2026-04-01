@@ -9,7 +9,7 @@ import {
   updateResumeContent, getAIConfig, saveAIConfig,
   optimizeResume, matchJobs, exportPDFViaAPI, clearAllJobs,
   deepThink, saveDeepThinkConfig, saveSecondaryModel,
-  chatWithAIAssistant,
+  chatWithAIAssistant, chatWithAIAssistantStream,
   getAICapabilities, getDeepThinkConfig,
 } from './dashboard-api.js';
 
@@ -1504,11 +1504,62 @@ function renderResumeSectionItems(section, templateId) {
     `).join('');
   }
 
-  return `
-    <ul class="resume-list">
-      ${section.items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
-    </ul>
-  `;
+  // structured 模板：检测经历条目（公司/时间），结构化渲染
+  const isEntryHeader = (item) =>
+    /(?:19|20)\d{2}.*(?:至今|现在|[-~—至到])/.test(item) ||
+    /[｜|]\s*(?:19|20)\d{2}/.test(item);
+
+  const hasEntries = section.items.some(isEntryHeader);
+  if (!hasEntries) {
+    return `
+      <ul class="resume-list">
+        ${section.items.map(item => `<li>${escapeHtml(item)}</li>`).join('')}
+      </ul>
+    `;
+  }
+
+  // 将条目分组：标题行 + 子项
+  const entries = [];
+  let cur = null;
+  for (const item of section.items) {
+    if (isEntryHeader(item)) {
+      cur = { header: item, subs: [] };
+      entries.push(cur);
+    } else if (cur) {
+      cur.subs.push(item);
+    } else {
+      entries.push({ header: null, subs: [item] });
+    }
+  }
+
+  return entries.map((entry) => {
+    if (!entry.header) {
+      return `<ul class="resume-list">${entry.subs.map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>`;
+    }
+    const parts = entry.header.split(/[｜|]/);
+    const company = (parts[0] || '').trim();
+    const dateRange = (parts[1] || '').trim();
+    // 第一个子项如果是 **职位** 格式，提升为副标题
+    let positionHtml = '';
+    let bulletStart = 0;
+    if (entry.subs.length && /^\*\*/.test(entry.subs[0])) {
+      positionHtml = `<div class="resume-entry__position">${escapeHtml(entry.subs[0].replace(/\*\*/g, ''))}</div>`;
+      bulletStart = 1;
+    }
+    const bulletsHtml = entry.subs.length > bulletStart
+      ? `<ul class="resume-entry__list">${entry.subs.slice(bulletStart).map(s => `<li>${escapeHtml(s)}</li>`).join('')}</ul>`
+      : '';
+    return `
+      <div class="resume-entry">
+        <div class="resume-entry__header">
+          <span class="resume-entry__company">${escapeHtml(company)}</span>
+          ${dateRange ? `<span class="resume-entry__date">${escapeHtml(dateRange)}</span>` : ''}
+        </div>
+        ${positionHtml}
+        ${bulletsHtml}
+      </div>
+    `;
+  }).join('');
 }
 
 function renderResumeStructuredBody(model, templateId = currentResumeTemplate) {
@@ -2319,6 +2370,17 @@ const RESUME_DOCUMENT_CSS = `
     letter-spacing: 1px;
     text-transform: uppercase;
   }
+
+  /* 结构化经历条目 */
+  .resume-entry { margin-bottom: 16px; }
+  .resume-entry:last-child { margin-bottom: 0; }
+  .resume-entry__header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 2px; }
+  .resume-entry__company { font-weight: 700; font-size: 15px; color: #1a1a1a; }
+  .resume-entry__date { font-size: 13px; color: #666; flex-shrink: 0; margin-left: 12px; }
+  .resume-entry__position { font-size: 14px; font-weight: 600; color: var(--resume-accent, #e62b1e); margin-bottom: 4px; }
+  .resume-entry__list { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 6px; }
+  .resume-entry__list li { position: relative; padding-left: 16px; font-size: 14px; line-height: 1.7; color: #333; white-space: pre-wrap; word-break: break-word; }
+  .resume-entry__list li::before { content: ''; position: absolute; left: 0; top: 11px; width: 7px; height: 3px; background: var(--resume-accent, #e62b1e); }
 
   .resume-list {
     margin: 0;
@@ -3950,7 +4012,10 @@ function showAITyping() {
 
 function hideAITyping() {
   const indicator = document.getElementById('typingIndicator');
-  if (indicator) indicator.style.display = 'none';
+  if (indicator) {
+    indicator.style.display = 'none';
+    indicator.innerHTML = '<span></span><span></span><span></span>';
+  }
 }
 
 /**
@@ -4170,7 +4235,21 @@ function shouldTriggerDeepThink(text, context) {
           resume_updated: false,
         };
       } else {
-        data = await chatWithAIAssistant(jobId, text, aiConversationHistory);
+        // SSE streaming with fallback
+        const typingEl = document.querySelector('#typingIndicator');
+        try {
+          data = await chatWithAIAssistantStream(jobId, text, aiConversationHistory, (event) => {
+            if (typingEl && event.message) {
+              typingEl.innerHTML = `<span style="font-size:13px;color:#888;">${event.message}</span>`;
+            }
+          });
+        } catch (sseErr) {
+          console.warn('[AI] SSE failed, falling back:', sseErr.message);
+          if (typingEl) {
+            typingEl.innerHTML = '<span></span><span></span><span></span>';
+          }
+          data = await chatWithAIAssistant(jobId, text, aiConversationHistory);
+        }
       }
       hideAITyping();
 
@@ -4201,8 +4280,7 @@ function shouldTriggerDeepThink(text, context) {
           currentResume.content_md = resumeContentMd;
         }
         refreshAllResumeViews();
-        // 保存到后端
-        updateResumeContent(currentResumeDraftMd).catch(() => {});
+        // Backend update_resume tool already wrote to DB — no need to double-write
         addAIResponseMessage('✅ 简历已根据 AI 建议更新，请查看中栏', '系统');
       }
     } catch (err) {

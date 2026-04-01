@@ -1058,6 +1058,11 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/ai/assistant/stream' && req.method === 'POST') {
+    aiHandler.handleAssistantChatStream(req, res);
+    return;
+  }
+
   if (url.pathname === '/api/ai/match' && req.method === 'POST') {
     aiHandler.handleJobMatch(req, res);
     return;

@@ -1638,6 +1638,62 @@ a {
     letter-spacing: 1px;
 }
 
+/* 结构化经历条目（xiaojizhi 风格） */
+.resume-entry {
+    margin-bottom: 14px;
+}
+.resume-entry:last-child {
+    margin-bottom: 0;
+}
+.resume-entry__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 2px;
+}
+.resume-entry__company {
+    font-weight: 700;
+    font-size: 14px;
+    color: #1a1a1a;
+}
+.resume-entry__date {
+    font-size: 12px;
+    color: #666;
+    flex-shrink: 0;
+    margin-left: 12px;
+}
+.resume-entry__position {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--c-red, #e62b1e);
+    margin-bottom: 4px;
+}
+.resume-entry__list {
+    list-style: none;
+    margin: 4px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 4px;
+}
+.resume-entry__list li {
+    position: relative;
+    padding-left: 14px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: #333;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.resume-entry__list li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 10px;
+    width: 6px;
+    height: 3px;
+    background: var(--c-red, #e62b1e);
+}
+
 .resume-list {
     margin: 0;
     padding: 0;
