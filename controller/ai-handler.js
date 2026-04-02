@@ -328,6 +328,7 @@ function getAssistantToolCatalog() {
     { name: 'search_jobs_db', summary: '在本地职位库中按关键词搜索岗位。' },
     { name: 'query_database', summary: '对本地 SQLite 数据库执行只读 SELECT 查询。' },
     { name: 'update_resume', summary: '在用户明确要求时，直接更新当前简历内容。' },
+    { name: 'update_resume_ops', summary: '用结构化操作修改简历局部内容（优先使用此工具）。' },
     { name: 'read_project_skill', summary: '读取项目的 SKILL.md，理解爬虫/插件入口与工作方式。' },
     { name: 'fetch_url', summary: '抓取指定 URL 的网页正文文本。' },
     { name: 'web_search', summary: '联网搜索公开网页信息，返回结果摘要。' },
@@ -372,9 +373,28 @@ function getAssistantToolGuide(toolName) {
       notes: ['禁止 UPDATE/DELETE/INSERT/ATTACH/ALTER/DROP。结果会自动限流。']
     },
     update_resume: {
-      purpose: '直接更新当前简历 Markdown。',
+      purpose: '直接更新当前简历 Markdown（整篇覆盖，仅作兜底）。',
       args: { content_md: '完整 Markdown', reason: '更新原因' },
-      notes: ['仅当用户明确提出修改/优化简历时使用。']
+      notes: ['优先使用 update_resume_ops 进行局部修改，仅在需要大幅重写整篇简历时使用此工具。']
+    },
+    update_resume_ops: {
+      purpose: '用结构化操作局部修改简历（推荐优先使用）。',
+      args: {
+        ops: '操作数组，每个操作格式: { tool: "操作名", args: {...} }',
+        reason: '修改原因',
+        change_summary: '{ changed_sections: ["工作经历"], changed_items_count: 3 }'
+      },
+      notes: [
+        '支持的操作: resume_set_field, resume_update_node, resume_insert_node, resume_delete_node, resume_move_node, resume_replace_text',
+        'resume_set_field: args: { field: "name|headline|meta.phone|meta.email|meta.location", value: "新值" }',
+        'resume_update_node: args: { sectionId: "sec-0", itemId: "item-0", text: "新内容" } 或 { sectionId: "sec-0", title: "新标题" }',
+        'resume_insert_node: args: { type: "section"|"item", title: "标题", afterSectionId: "sec-0", items: ["内容1","内容2"] }',
+        'resume_delete_node: args: { sectionId: "sec-0", itemId: "item-0" }（不传itemId则删整个section）',
+        'resume_move_node: args: { sectionId: "sec-0", direction: "up"|"down" }',
+        'resume_replace_text: args: { oldText: "旧文本", newText: "新文本" }',
+        '【头部保护】不要修改 name/meta 字段，除非用户明确要求。',
+        '每次修改后前端会实时预览变化。'
+      ]
     },
     read_project_skill: {
       purpose: '读取项目根目录 SKILL.md 或子目录中的技能文档。',
@@ -470,7 +490,7 @@ function buildAssistantSystemPrompt({ bootstrapContext, currentJobId }) {
     '不要把所有工具都先跑一遍。优先基于已有上下文和用户消息判断，再按需调用工具。',
     '如果简历内容和岗位信息已经在上下文中（标注"已预读"），直接使用这些内容，不要再调用 read_resume 或 read_current_job。',
     '工具使用采用渐进式披露：先看下面的摘要；若要细化某个工具用法，先调用 get_tool_guide。',
-    '如果用户明确要求优化、改写、修改简历，你可以调用 update_resume 直接更新简历。',
+    '如果用户明确要求优化、改写、修改简历，优先调用 update_resume_ops 进行局部结构化修改；仅在需要整篇重写时才使用 update_resume。',
     '如果用户只是咨询，不要修改简历。',
     currentJobId ? `当前对话绑定岗位 ID: ${currentJobId}` : '当前没有绑定岗位 ID。',
     '你必须始终只输出 JSON，不允许输出 JSON 之外的自然语言。',
@@ -724,6 +744,32 @@ async function executeAssistantTool({ db, toolName, args, currentJobId, resume }
         content_md: contentMd,
       };
     }
+    case 'update_resume_ops': {
+      const ops = args?.ops;
+      const reason = String(args?.reason || '').trim();
+      const changeSummary = args?.change_summary || {};
+      if (!Array.isArray(ops) || ops.length === 0) {
+        throw new Error('ops 必须是非空数组');
+      }
+      // 白名单校验
+      const ALLOWED_OPS = [
+        'resume_set_field', 'resume_update_node', 'resume_insert_node',
+        'resume_delete_node', 'resume_move_node', 'resume_replace_text',
+        'resume_set_template', 'resume_commit_changes', 'resume_rollback_changes'
+      ];
+      for (const op of ops) {
+        if (!ALLOWED_OPS.includes(op.tool)) {
+          throw new Error(`不允许的操作: ${op.tool}`);
+        }
+      }
+      return {
+        success: true,
+        reason,
+        resume_updated: true,
+        resume_ops: ops,
+        resume_change_summary: changeSummary,
+      };
+    }
     case 'read_project_skill': {
       // 支持读取子目录中的 skill 文件
       let skillPath = PROJECT_SKILL_FILE;
@@ -845,6 +891,8 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
   let resumeUpdated = false;
   let latestResumeContent = resume?.content_md || '';
   const toolTrace = [];
+  let collectedOps = [];
+  let lastChangeSummary = {};
 
   for (let step = 0; step < ASSISTANT_MAX_TOOL_STEPS; step += 1) {
     if (step > 0) {
@@ -875,6 +923,7 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
         read_resume: '📄 正在读取简历...',
         read_current_job: '📋 正在读取岗位信息...',
         update_resume: '✏️ 正在修改简历...',
+        update_resume_ops: '✏️ 正在局部修改简历...',
         search_jobs_db: '🔍 正在搜索岗位...',
         query_database: '🗃️ 正在查询数据...',
         list_selected_jobs: '📌 正在读取收藏岗位...',
@@ -895,6 +944,19 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
         resumeUpdated = true;
         latestResumeContent = toolResult.content_md;
         onProgress({ type: 'resume_updated', message: '✅ 简历已更新' });
+      }
+
+      // 结构化操作模式 — 实时推送 ops 给前端
+      if (toolResult?.resume_updated && toolResult?.resume_ops) {
+        resumeUpdated = true;
+        collectedOps.push(...toolResult.resume_ops);
+        lastChangeSummary = toolResult.resume_change_summary || lastChangeSummary;
+        onProgress({
+          type: 'resume_ops_batch',
+          ops: toolResult.resume_ops,
+          change_summary: toolResult.resume_change_summary || {},
+        });
+        onProgress({ type: 'resume_updated', message: '✅ 简历局部更新' });
       }
 
       toolTrace.push({
@@ -920,6 +982,8 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
         resume_updated_content_md: resumeUpdated
           ? latestResumeContent
           : (parsed.resume_updated_content_md || ''),
+        resume_ops: collectedOps.length > 0 ? collectedOps : null,
+        resume_change_summary: collectedOps.length > 0 ? lastChangeSummary : null,
         memory_update: parsed.memory_update || { should_update: false, reason: '', content_md: '' },
         tool_trace: toolTrace,
       };
@@ -1435,12 +1499,29 @@ async function handleAssistantChatStream(req, res) {
         memory_update: assistantResult.memory_update,
       });
 
+      // 记录简历编辑版本
+      if (assistantResult.resume_updated && typeof resumeDb.createResumeVersion === 'function') {
+        try {
+          resumeDb.createResumeVersion({
+            resumeId: resume?.id || 1,
+            oldContentMd: resume?.content_md || '',
+            newContentMd: assistantResult.resume_updated_content_md || '',
+            ops: assistantResult.resume_ops || null,
+            changeSummary: assistantResult.resume_change_summary || null,
+          });
+        } catch (vErr) {
+          console.warn('[AIAssistant] 版本记录失败:', vErr.message);
+        }
+      }
+
       sendEvent('done', {
         success: true,
         reply: sanitizeReply(assistantResult.reply),
         suggestions: assistantResult.suggestions || [],
         resume_updated: assistantResult.resume_updated,
         resume_updated_content_md: assistantResult.resume_updated_content_md || '',
+        resume_ops: assistantResult.resume_ops || null,
+        resume_change_summary: assistantResult.resume_change_summary || null,
         memory_updated: memoryResult.updated,
         tool_trace: assistantResult.tool_trace || [],
       });

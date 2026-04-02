@@ -109,3 +109,4 @@ MULTI_PLATFORM_PHASE_PRD.md
 
 # Uploads and data
 controller/uploads/
+controller/.native_host_state.json

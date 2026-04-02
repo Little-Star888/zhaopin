@@ -2974,7 +2974,7 @@ body.ai-active .sp-r { width: 30%; min-width: 320px; opacity: 1; pointer-events:
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 16px 18px 12px;
+    padding: 12px 10px 8px;
     display: flex;
     flex-direction: column;
     gap: 16px;
@@ -3056,7 +3056,7 @@ body.ai-active .sp-r { width: 30%; min-width: 320px; opacity: 1; pointer-events:
 .message-bubble {
     padding: 10px 14px;
     border-radius: 12px;
-    max-width: min(78%, 420px);
+    max-width: calc(100% - 56px);
     width: fit-content;
     word-break: normal;
     overflow-wrap: anywhere;
@@ -3181,7 +3181,7 @@ body.ai-active .sp-r { width: 30%; min-width: 320px; opacity: 1; pointer-events:
     transform: none;
 }
 
-/* 打字指示器 */
+/* 打字指示器 — 仅用于三点跳动动画 */
 .typing-indicator {
     display: flex;
     align-items: center;
@@ -3206,6 +3206,44 @@ body.ai-active .sp-r { width: 30%; min-width: 320px; opacity: 1; pointer-events:
 @keyframes typing {
     0%, 80%, 100% { transform: scale(0.6); opacity: 0.5; }
     40% { transform: scale(1); opacity: 1; }
+}
+
+/* 流式状态文本 — 独立于打字指示器 */
+.ai-stream-status {
+    padding: 6px 14px;
+    font-size: 13px;
+    color: #888;
+    line-height: 1.4;
+    white-space: normal;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    writing-mode: horizontal-tb;
+    text-orientation: mixed;
+    width: fit-content;
+    max-width: 100%;
+}
+
+.btn-undo-resume {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 6px;
+    padding: 4px 12px;
+    font-size: 12px;
+    color: #e67e22;
+    background: rgba(230, 126, 34, 0.08);
+    border: 1px solid rgba(230, 126, 34, 0.25);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.btn-undo-resume:hover {
+    background: rgba(230, 126, 34, 0.18);
+    border-color: rgba(230, 126, 34, 0.45);
+}
+.btn-undo-resume:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 /* ========================================

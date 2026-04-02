@@ -13,6 +13,18 @@ import {
   getAICapabilities, getDeepThinkConfig,
 } from './dashboard-api.js';
 
+import {
+  ResumeDocument,
+  initResumeDocumentFromMarkdown,
+  getCurrentResumeDocument,
+  setResumeDocument,
+  commitResumeState,
+} from './resume-document-model.js';
+
+import {
+  executeBatch,
+} from './resume-script-editor.js';
+
 /* ==================== Toast ==================== */
 
 function showToast(message, type = 'info') {
@@ -3890,6 +3902,7 @@ function loadSplitRightAssistant(jobId) {
           <div class="typing-indicator" id="typingIndicator" style="display: none;">
             <span></span><span></span><span></span>
           </div>
+          <div class="ai-stream-status" id="aiStreamStatus" style="display: none;"></div>
         </div>
         <div class="ai-input-minimal ai-input-bar">
           <label class="upload-minimal-btn" title="上传图片或文件">
@@ -4236,20 +4249,40 @@ function shouldTriggerDeepThink(text, context) {
         };
       } else {
         // SSE streaming with fallback
-        const typingEl = document.querySelector('#typingIndicator');
+        const statusEl = document.querySelector('#aiStreamStatus');
+        let pendingOps = [];
         try {
           data = await chatWithAIAssistantStream(jobId, text, aiConversationHistory, (event) => {
-            if (typingEl && event.message) {
-              typingEl.innerHTML = `<span style="font-size:13px;color:#888;">${event.message}</span>`;
+            if (statusEl && event.message) {
+              statusEl.textContent = event.message;
+              statusEl.style.display = 'block';
+            }
+            // 实时应用结构化操作到简历预览
+            if (event.type === 'resume_ops_batch' && Array.isArray(event.ops)) {
+              pendingOps.push(...event.ops);
+              try {
+                // 初始化 ResumeDocument（如果还没有）
+                if (!getCurrentResumeDocument() && currentResumeDraftMd) {
+                  initResumeDocumentFromMarkdown(currentResumeDraftMd);
+                }
+                const doc = getCurrentResumeDocument();
+                if (doc) {
+                  const results = executeBatch(event.ops, 'direct');
+                  const newMd = doc.toMarkdown();
+                  currentResumeDraftMd = newMd;
+                  if (currentResume) currentResume.content_md = newMd;
+                  refreshAllResumeViews();
+                }
+              } catch (opsErr) {
+                console.warn('[AI] 实时 ops 应用失败，等待最终结果:', opsErr.message);
+              }
             }
           });
         } catch (sseErr) {
           console.warn('[AI] SSE failed, falling back:', sseErr.message);
-          if (typingEl) {
-            typingEl.innerHTML = '<span></span><span></span><span></span>';
-          }
           data = await chatWithAIAssistant(jobId, text, aiConversationHistory);
         }
+        if (statusEl) statusEl.style.display = 'none';
       }
       hideAITyping();
 
@@ -4274,14 +4307,70 @@ function shouldTriggerDeepThink(text, context) {
       saveAssistantSession(jobId, aiConversationHistory);
 
       // 处理 AI 修改简历的写回
-      if (data.resume_updated && resumeContentMd) {
-        currentResumeDraftMd = resumeContentMd;
-        if (currentResume) {
-          currentResume.content_md = resumeContentMd;
+      if (data.resume_updated) {
+        // 优先使用 resume_ops 结构化操作模式
+        if (data.resume_ops && Array.isArray(data.resume_ops) && data.resume_ops.length > 0) {
+          try {
+            if (!getCurrentResumeDocument() && currentResumeDraftMd) {
+              initResumeDocumentFromMarkdown(currentResumeDraftMd);
+            }
+            const doc = getCurrentResumeDocument();
+            if (doc) {
+              executeBatch(data.resume_ops, 'direct');
+              const newMd = doc.toMarkdown();
+              currentResumeDraftMd = newMd;
+              if (currentResume) currentResume.content_md = newMd;
+              // 保存到后端
+              updateResumeContent(newMd).catch(e => console.warn('[AI] 保存失败:', e.message));
+              refreshAllResumeViews();
+            }
+          } catch (opsErr) {
+            console.warn('[AI] resume_ops 执行失败，降级到全量覆盖:', opsErr.message);
+            if (resumeContentMd) {
+              currentResumeDraftMd = resumeContentMd;
+              if (currentResume) currentResume.content_md = resumeContentMd;
+              refreshAllResumeViews();
+            }
+          }
+          // 显示变更摘要（含撤销按钮）
+          const summary = data.resume_change_summary;
+          const undoBtnId = `undo-resume-${Date.now()}`;
+          let summaryText;
+          if (summary && summary.changed_sections) {
+            summaryText = `✅ 简历已更新：修改了 ${summary.changed_sections.join('、')}（共 ${summary.changed_items_count || '若干'} 处）`;
+          } else {
+            summaryText = '✅ 简历已根据 AI 建议更新，请查看中栏';
+          }
+          summaryText += `<br><button id="${undoBtnId}" class="btn-undo-resume" title="撤销本次修改">↩ 撤销</button>`;
+          addAIResponseMessage(summaryText, '系统');
+          // 绑定撤销按钮
+          const undoBtn = document.getElementById(undoBtnId);
+          if (undoBtn) {
+            const prevMd = currentResumeDraftMd; // 保存当前状态作为回退目标
+            undoBtn.addEventListener('click', () => {
+              const doc = getCurrentResumeDocument();
+              if (doc && typeof doc.rollback === 'function') {
+                doc.rollback();
+                const rolledBackMd = doc.toMarkdown();
+                currentResumeDraftMd = rolledBackMd;
+                if (currentResume) currentResume.content_md = rolledBackMd;
+                updateResumeContent(rolledBackMd).catch(e => console.warn('[AI] 撤销保存失败:', e.message));
+                refreshAllResumeViews();
+                addAIResponseMessage('↩ 已撤销本次 AI 编辑', '系统');
+                undoBtn.disabled = true;
+                undoBtn.textContent = '已撤销';
+              }
+            });
+          }
+        } else if (resumeContentMd) {
+          // 兜底：整篇 Markdown 覆盖
+          currentResumeDraftMd = resumeContentMd;
+          if (currentResume) {
+            currentResume.content_md = resumeContentMd;
+          }
+          refreshAllResumeViews();
+          addAIResponseMessage('✅ 简历已根据 AI 建议更新，请查看中栏', '系统');
         }
-        refreshAllResumeViews();
-        // Backend update_resume tool already wrote to DB — no need to double-write
-        addAIResponseMessage('✅ 简历已根据 AI 建议更新，请查看中栏', '系统');
       }
     } catch (err) {
       hideAITyping();

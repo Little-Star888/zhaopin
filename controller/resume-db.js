@@ -113,11 +113,87 @@ function updateResume(fields) {
   }
 }
 
+/**
+ * 创建 AI 编辑版本记录
+ *
+ * @param {Object} params
+ * @param {number} params.resumeId - 简历 ID
+ * @param {string} params.oldContentMd - 修改前 Markdown
+ * @param {string} params.newContentMd - 修改后 Markdown
+ * @param {Array} [params.ops] - 结构化操作 JSON
+ * @param {Object} [params.changeSummary] - 变更摘要
+ * @returns {{ success: boolean, versionId?: number }}
+ */
+function createResumeVersion({ resumeId, oldContentMd, newContentMd, ops, changeSummary }) {
+  const db = getDatabase();
+  try {
+    // 确保 resume_edit_versions 表存在
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS resume_edit_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        resume_id INTEGER NOT NULL,
+        old_content_md TEXT,
+        new_content_md TEXT,
+        ops_json TEXT,
+        change_summary TEXT,
+        source TEXT DEFAULT 'ai_assistant',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    const result = db.prepare(`
+      INSERT INTO resume_edit_versions (resume_id, old_content_md, new_content_md, ops_json, change_summary, source)
+      VALUES (?, ?, ?, ?, ?, 'ai_assistant')
+    `).run(
+      resumeId,
+      oldContentMd || '',
+      newContentMd || '',
+      ops ? JSON.stringify(ops) : null,
+      changeSummary ? JSON.stringify(changeSummary) : null
+    );
+    return { success: true, versionId: result.lastInsertRowid };
+  } catch (error) {
+    console.error('[ResumeDB] createResumeVersion error:', error.message);
+    return { success: false, error: error.message };
+  }
+}
+
+/**
+ * 获取简历编辑历史
+ *
+ * @param {number} resumeId
+ * @param {number} [limit=10]
+ * @returns {Array}
+ */
+function getResumeVersions(resumeId, limit = 10) {
+  const db = getDatabase();
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS resume_edit_versions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        resume_id INTEGER NOT NULL,
+        old_content_md TEXT,
+        new_content_md TEXT,
+        ops_json TEXT,
+        change_summary TEXT,
+        source TEXT DEFAULT 'ai_assistant',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    return db.prepare(
+      'SELECT id, resume_id, change_summary, source, created_at FROM resume_edit_versions WHERE resume_id = ? ORDER BY id DESC LIMIT ?'
+    ).all(resumeId, limit);
+  } catch (error) {
+    return [];
+  }
+}
+
 module.exports = {
   insertResume,
   getLatestResume,
   getAllResumes,
   deleteResume,
   getResumeCount,
-  updateResume
+  updateResume,
+  createResumeVersion,
+  getResumeVersions
 };

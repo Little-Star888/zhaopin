@@ -141,6 +141,15 @@ async function scrapeJobs(keyword, cityCode, pageSize = 15, experience = '', pag
         salary: job.salaryDesc
       })) || '';
 
+      // 如果 DOM 上没有 href，可基于 encryptJobId/securityId/lid 构建回退 URL（用于后台在 normalize 时使用）
+      let constructedUrl = '';
+      if (!domMatchedUrl && job.encryptJobId) {
+        const enc = job.encryptJobId;
+        const sec = job.securityId || '';
+        const lid = job.lid || '';
+        constructedUrl = `https://www.zhipin.com/job_detail/${enc}.html${sec || lid ? `?securityId=${encodeURIComponent(sec)}&lid=${encodeURIComponent(lid)}` : ''}`;
+      }
+
       return ({
       encryptJobId: job.encryptJobId,
       encryptBrandId: job.encryptBrandId || null,
@@ -159,7 +168,8 @@ async function scrapeJobs(keyword, cityCode, pageSize = 15, experience = '', pag
       brandScaleName: job.brandScaleName || '',
       securityId: job.securityId || '',  // 用于获取详情
       lid: job.lid || '',  // 用于获取详情
-      url: domMatchedUrl
+      url: domMatchedUrl || constructedUrl,
+      constructedUrlUsed: !!constructedUrl
     });
     });
 

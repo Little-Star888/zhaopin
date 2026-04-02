@@ -1121,6 +1121,14 @@ class JobHunterService {
       // 合并结果到外部变量
       allJobs.push(...crawlResult.allJobs);
       filteredJobs.push(...crawlResult.filteredJobs);
+
+      // 如果 executeBufferedBossCrawl 返回了新的活跃 tab（策略切换时可能重建），更新本地 tab 以便 finally 正确关闭最新 tab
+      if (crawlResult && crawlResult.tabId) {
+        try {
+          tab = { ...tab, id: crawlResult.tabId };
+        } catch (_) {}
+      }
+
       if (crawlResult.antiCrawlTriggered) {
         antiCrawlTriggered = true;
         await this.transitionCrawlState('anti_crawl');
@@ -2108,9 +2116,16 @@ class JobHunterService {
     const filteredJobs = [];
     const strategyReport = [];
     let antiCrawlTriggered = false;
+    let listAntiCrawlTriggered = false;
+    let listAntiCrawlMeta = {
+      strategyId: null,
+      page: null,
+      error: null
+    };
     let totalCount = null;
     let incrementalInsertedCount = 0;
     let totalListed = 0;
+    let activeTabId = tabId;
 
     console.log(`[JobHunter] 📋 V2 Buffer Crawl: ${strategies.length} strategies available`);
     for (const s of strategies) {
@@ -2156,7 +2171,7 @@ class JobHunterService {
             console.log(`[JobHunter] Fetching list page ${page}/${strategy.maxPages} (strategy: ${strategy.id}, pageSize=${strategy.listPageSize})`);
             report.pagesAttempted++;
 
-            const pageResult = await this.sendMessageToTab(tabId, {
+            const pageResult = await this.sendMessageToTab(activeTabId, {
               type: 'SCRAPE_JOBS',
               keyword,
               cityCode,
@@ -2172,6 +2187,10 @@ class JobHunterService {
                 report.error = pageResult.error;
                 report.result = 'anti_crawl';
                 strategyAntiCrawl = true;
+                // Mark list-level anti-crawl even when we already have partial results
+                listAntiCrawlTriggered = true;
+                listAntiCrawlMeta = { strategyId: strategy.id, page, error: pageResult.error };
+
                 if (page === 1 && allJobs.length === 0) {
                   const cooldown = 30000 + Math.random() * 10000;
                   console.log(`[JobHunter]   ⏱️ Page 1 anti-crawl, cooling ${(cooldown / 1000).toFixed(1)}s...`);
@@ -2184,7 +2203,7 @@ class JobHunterService {
                 report.result = 'security_check';
                 report.endTime = Date.now();
                 strategyReport.push(report);
-                return { allJobs, filteredJobs, antiCrawlTriggered: true, strategyReport, incrementalInsertedCount, totalCount, totalListed };
+                return { allJobs, filteredJobs, antiCrawlTriggered: true, strategyReport, incrementalInsertedCount, totalCount, totalListed, listAntiCrawlTriggered, listAntiCrawlMeta };
               }
               console.warn(`[JobHunter] List page ${page} error: ${pageResult.error}`);
               report.error = pageResult.error;
@@ -2246,7 +2265,7 @@ class JobHunterService {
 
                   try {
                     this.runStats.detailRequestedCount++;
-                    const detailResult = await this.fetchJobDetailWithRetry(tabId, job, 2);
+                    const detailResult = await this.fetchJobDetailWithRetry(activeTabId, job, 2);
 
                     if (detailResult.success && detailResult.data) {
                       this.runStats.detailSuccessCount++;
@@ -2277,11 +2296,16 @@ class JobHunterService {
                       console.log(`[JobHunter]   ✓ ${detailResult.data.description?.length || 0} chars`);
 
                       if (isManualTask) {
-                        const insertResult = await this.reportJobsToController(
-                          [this.normalizeBossJobForBatchInsert(hydratedJob, deliveryBatchId)],
-                          'boss'
-                        );
-                        incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
+                        manualBatch.push(this.normalizeBossJobForBatchInsert(hydratedJob, deliveryBatchId));
+                        if (manualBatch.length >= 10) {
+                          try {
+                            const insertResult = await this.reportJobsToController(manualBatch, 'boss');
+                            incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
+                          } catch (e) {
+                            console.warn('[JobHunter] Manual batch insert failed', e && e.message);
+                          }
+                          manualBatch = [];
+                        }
                       }
                     } else {
                       this.runStats.failCount++;
@@ -2313,7 +2337,7 @@ class JobHunterService {
 
             page++;
             if (hasMore && page <= strategy.maxPages && this.isRunning) {
-              const listDelay = strategy.listDelayMs + Math.random() * 3000;
+              const listDelay = this.getProgressiveBossListDelay(strategy, page) + Math.random() * 3000;
               console.log(`[JobHunter]   ⏱️ List delay ${(listDelay / 1000).toFixed(1)}s...`);
               await this.sleep(listDelay);
             }
@@ -2321,7 +2345,7 @@ class JobHunterService {
 
         } else {
           // ── 顺序模式：先列表全获取，再统一详情 ──
-          const listResult = await this.scrapeJobListPages(tabId, {
+          const listResult = await this.scrapeJobListPages(activeTabId, {
             keyword,
             cityCode,
             pageSize: strategy.listPageSize,
@@ -2380,7 +2404,7 @@ class JobHunterService {
 
           // 冷却
           if (detailCandidates.length > 0) {
-            const cooldown = strategy.listDelayMs + Math.random() * 2000;
+            const cooldown = this.getProgressiveBossListDelay(strategy, page) + Math.random() * 2000;
             console.log(`[JobHunter] ⏱️ Post-list cooldown ${(cooldown / 1000).toFixed(1)}s...`);
             await this.sleep(cooldown);
           }
@@ -2393,7 +2417,7 @@ class JobHunterService {
 
             try {
               this.runStats.detailRequestedCount++;
-              const detailResult = await this.fetchJobDetailWithRetry(tabId, job, 2);
+              const detailResult = await this.fetchJobDetailWithRetry(activeTabId, job, 2);
 
               if (detailResult.success && detailResult.data) {
                 this.runStats.detailSuccessCount++;
@@ -2423,12 +2447,17 @@ class JobHunterService {
                 console.log(`[JobHunter]   ✓ ${detailResult.data.description?.length || 0} chars`);
 
                 if (isManualTask) {
-                  const insertResult = await this.reportJobsToController(
-                    [this.normalizeBossJobForBatchInsert(hydratedJob, deliveryBatchId)],
-                    'boss'
-                  );
-                  incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
+                manualBatch.push(this.normalizeBossJobForBatchInsert(hydratedJob, deliveryBatchId));
+                if (manualBatch.length >= 10) {
+                  try {
+                    const insertResult = await this.reportJobsToController(manualBatch, 'boss');
+                    incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
+                  } catch (e) {
+                    console.warn('[JobHunter] Manual batch insert failed', e && e.message);
+                  }
+                  manualBatch = [];
                 }
+              }
               } else {
                 this.runStats.failCount++;
                 if (this.isAntiCrawlError(detailResult.error)) {
@@ -2472,6 +2501,17 @@ class JobHunterService {
         const switchCooldown = 15000 + Math.random() * 10000;
         console.log(`[JobHunter]   ⏱️ Switch cooldown ${(switchCooldown / 1000).toFixed(1)}s...`);
         await this.sleep(switchCooldown);
+
+        // Recreate tab to avoid reusing potentially tainted session/context
+        try {
+          activeTabId = await this.recreateBossTaskTab(activeTabId, {
+            keyword,
+            cityCode,
+            isManualTask
+          });
+        } catch (err) {
+          console.warn('[JobHunter] Failed to recreate tab during strategy switch:', err.message || err);
+        }
       }
     }
 
@@ -2489,7 +2529,23 @@ class JobHunterService {
       antiCrawlTriggered = true;
     }
 
-    return { allJobs, filteredJobs, antiCrawlTriggered, strategyReport, incrementalInsertedCount, totalCount, totalListed };
+    // flush pending manual batch if any
+    if (typeof manualBatch !== 'undefined' && manualBatch.length > 0) {
+      try {
+        const insertResult = await this.reportJobsToController(manualBatch, 'boss');
+        incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
+      } catch (e) {
+        console.warn('[JobHunter] Final manual batch insert failed', e && e.message);
+      }
+      manualBatch = [];
+    }
+
+    // persist seen job ids as a best-effort backup
+    try {
+      await this.persistSeenJobIds(Array.from(seenJobIds || []));
+    } catch (_) {}
+
+    return { allJobs, filteredJobs, antiCrawlTriggered, listAntiCrawlTriggered, listAntiCrawlMeta, strategyReport, incrementalInsertedCount, totalCount, totalListed, tabId: activeTabId };
   }
 
   buildTaskResult({ city, keyword, taskId, status, total, pushed, filtered, errorCode, errorMessage, withDescription }) {
@@ -2526,6 +2582,26 @@ class JobHunterService {
       city: cityCode
     });
     return `https://www.zhipin.com/web/geek/jobs?${params.toString()}`;
+  }
+
+  // 重建 Boss 搜索标签页（用于策略切换时换环境）
+  async recreateBossTaskTab(currentTabId, { keyword, cityCode, isManualTask }) {
+    try {
+      if (currentTabId) {
+        await this.closeTabIfNeeded(currentTabId);
+      }
+    } catch (_) {}
+
+    const newTab = await this.createTabWithRetry({
+      url: this.buildBossSearchUrl(keyword, cityCode),
+      active: Boolean(isManualTask)
+    });
+
+    await this.waitForTabLoad(newTab.id);
+    await this.waitForContentScript(newTab.id);
+
+    console.log(`[JobHunter] Recreated Boss tab: ${newTab.id} for ${keyword}/${cityCode}`);
+    return newTab.id;
   }
 
   // 带重试机制的详情获取
@@ -2568,6 +2644,30 @@ class JobHunterService {
    * 轻量规则评分：对岗位打分，低于阈值则过滤
    * 返回 { score, reason }，reason为空表示通过
    */
+  // Helper: persist seen job ids to chrome.storage.local
+  async persistSeenJobIds(seenJobIds) {
+    try {
+      if (!seenJobIds) return;
+      const arr = Array.isArray(seenJobIds) ? seenJobIds : Array.from(seenJobIds || []);
+      if (arr.length === 0) return;
+      const key = 'persistedSeenJobIds';
+      const existing = await new Promise((res) => chrome.storage.local.get([key], (r) => res(r[key] || {})));
+      const merged = existing || {};
+      for (const id of arr) merged[id] = Date.now();
+      await new Promise((res) => chrome.storage.local.set({ [key]: merged }, res));
+      console.log(`[JobHunter] Persisted ${arr.length} seenJobIds`);
+    } catch (e) {
+      console.warn('[JobHunter] persistSeenJobIds failed', e && e.message);
+    }
+  }
+
+  getProgressiveBossListDelay(strategy, page) {
+    const base = (strategy && strategy.listDelayMs) ? strategy.listDelayMs : 2000;
+    const extra = Math.max(0, (page - 1) * 500);
+    const delay = Math.min(base + extra, base * 4);
+    return delay;
+  }
+
   scoreJob(job, options = {}) {
     let score = 0;
     const title = job.jobName || '';

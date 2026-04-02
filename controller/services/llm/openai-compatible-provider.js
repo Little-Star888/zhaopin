@@ -13,7 +13,7 @@ const OpenAI = require('openai');
  * 创建 OpenAI 兼容 Provider 实例
  *
  * @param {import('./llm-contracts').LLMConfig} config - LLM 配置
- * @returns {{ chat: (messages: import('./llm-contracts').ChatMessage[]) => Promise<import('./llm-contracts').LLMResponse> }}
+ * @returns {{ chat, chatStream }}
  */
 function createOpenAIProvider(config) {
     const client = new OpenAI({
@@ -23,7 +23,7 @@ function createOpenAIProvider(config) {
 
     return {
         /**
-         * 发送聊天请求
+         * 发送聊天请求（非流式）
          *
          * @param {import('./llm-contracts').ChatMessage[]} messages
          * @returns {Promise<import('./llm-contracts').LLMResponse>}
@@ -40,6 +40,36 @@ function createOpenAIProvider(config) {
                 };
             } catch (err) {
                 return { content: '', error: err };
+            }
+        },
+
+        /**
+         * 流式聊天请求 — 逐 chunk 回调
+         *
+         * @param {import('./llm-contracts').ChatMessage[]} messages
+         * @param {(chunk: string) => void} onChunk - 每收到一段内容时回调
+         * @returns {Promise<import('./llm-contracts').LLMResponse>}
+         */
+        async chatStream(messages, onChunk) {
+            let fullContent = '';
+            let usage = null;
+            try {
+                const stream = await client.chat.completions.create({
+                    model: config.model,
+                    messages,
+                    stream: true,
+                });
+                for await (const chunk of stream) {
+                    const delta = chunk.choices?.[0]?.delta?.content || '';
+                    if (delta) {
+                        fullContent += delta;
+                        if (onChunk) onChunk(delta);
+                    }
+                    if (chunk.usage) usage = chunk.usage;
+                }
+                return { content: fullContent, usage };
+            } catch (err) {
+                return { content: fullContent || '', error: err };
             }
         },
     };
