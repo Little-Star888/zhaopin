@@ -2126,6 +2126,7 @@ class JobHunterService {
     let incrementalInsertedCount = 0;
     let totalListed = 0;
     let activeTabId = tabId;
+    let manualBatch = [];
 
     console.log(`[JobHunter] 📋 V2 Buffer Crawl: ${strategies.length} strategies available`);
     for (const s of strategies) {
@@ -2296,15 +2297,15 @@ class JobHunterService {
                       console.log(`[JobHunter]   ✓ ${detailResult.data.description?.length || 0} chars`);
 
                       if (isManualTask) {
-                        manualBatch.push(this.normalizeBossJobForBatchInsert(hydratedJob, deliveryBatchId));
-                        if (manualBatch.length >= 10) {
-                          try {
+                        try {
+                          manualBatch.push(this.normalizeBossJobForBatchInsert(hydratedJob, deliveryBatchId));
+                          if (manualBatch.length >= 10) {
                             const insertResult = await this.reportJobsToController(manualBatch, 'boss');
                             incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
-                          } catch (e) {
-                            console.warn('[JobHunter] Manual batch insert failed', e && e.message);
+                            manualBatch = [];
                           }
-                          manualBatch = [];
+                        } catch (batchErr) {
+                          console.warn('[JobHunter] Manual batch insert stage failed:', batchErr?.message || batchErr);
                         }
                       }
                     } else {
@@ -2447,17 +2448,17 @@ class JobHunterService {
                 console.log(`[JobHunter]   ✓ ${detailResult.data.description?.length || 0} chars`);
 
                 if (isManualTask) {
-                manualBatch.push(this.normalizeBossJobForBatchInsert(hydratedJob, deliveryBatchId));
-                if (manualBatch.length >= 10) {
                   try {
-                    const insertResult = await this.reportJobsToController(manualBatch, 'boss');
-                    incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
-                  } catch (e) {
-                    console.warn('[JobHunter] Manual batch insert failed', e && e.message);
+                    manualBatch.push(this.normalizeBossJobForBatchInsert(hydratedJob, deliveryBatchId));
+                    if (manualBatch.length >= 10) {
+                      const insertResult = await this.reportJobsToController(manualBatch, 'boss');
+                      incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
+                      manualBatch = [];
+                    }
+                  } catch (batchErr) {
+                    console.warn('[JobHunter] Manual batch insert stage failed:', batchErr?.message || batchErr);
                   }
-                  manualBatch = [];
                 }
-              }
               } else {
                 this.runStats.failCount++;
                 if (this.isAntiCrawlError(detailResult.error)) {
@@ -2530,7 +2531,7 @@ class JobHunterService {
     }
 
     // flush pending manual batch if any
-    if (typeof manualBatch !== 'undefined' && manualBatch.length > 0) {
+    if (manualBatch.length > 0) {
       try {
         const insertResult = await this.reportJobsToController(manualBatch, 'boss');
         incrementalInsertedCount += (insertResult.inserted || 0) + (insertResult.duplicates || 0);
