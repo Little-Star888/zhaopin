@@ -348,6 +348,8 @@ function getAssistantToolCatalog() {
     { name: 'read_project_skill', summary: '读取项目的 SKILL.md，理解爬虫/插件入口与工作方式。' },
     { name: 'fetch_url', summary: '抓取指定 URL 的网页正文文本。' },
     { name: 'web_search', summary: '联网搜索公开网页信息，返回结果摘要。' },
+    { name: 'smart_job_recommend', summary: '智能岗位推荐：根据用户要求和简历，自动筛选、评分、推荐匹配的岗位。用户要求推荐/筛选/匹配岗位时必须使用此工具。' },
+    { name: 'batch_select_jobs', summary: '批量选中岗位：将推荐的岗位批量加入工作台（标记为已选中）。' },
   ];
 }
 
@@ -426,6 +428,24 @@ function getAssistantToolGuide(toolName) {
       purpose: '搜索公开网页内容。',
       args: { query: '搜索词', limit: '可选，默认 5' },
       notes: ['返回的是搜索结果摘要，不是完整网页。']
+    },
+    smart_job_recommend: {
+      purpose: '根据用户的筛选要求和简历内容，智能推荐匹配岗位。会自动解析要求、提取简历画像、硬过滤、LLM打分。',
+      args: {
+        requirements: '用户的筛选要求，如"不要外包，薪资20k以上，前端岗位"',
+        top_n: '可选，返回前N个匹配岗位，默认20',
+        auto_select: '可选，是否自动将推荐岗位标记为已选（加入工作台），默认false'
+      },
+      notes: [
+        '当用户提到推荐/筛选/匹配/找工作/合适的岗位时，必须使用此工具。',
+        '支持自然语言要求：薪资范围、排除外包、城市限制、岗位方向等。',
+        '返回包含评分和匹配理由的岗位列表。'
+      ]
+    },
+    batch_select_jobs: {
+      purpose: '将指定岗位批量标记为已选中，加入工作台岗位列表。',
+      args: { job_ids: '岗位ID数组，如 [1, 5, 12, 23]' },
+      notes: ['配合 smart_job_recommend 使用，用户确认后批量导入推荐岗位。']
     },
   };
 
@@ -513,6 +533,22 @@ function buildAssistantSystemPrompt({ bootstrapContext, currentJobId }) {
     '当需要工具时，输出：{"action":"tool_call","tool":"工具名","arguments":{...},"reason":"为什么需要这个工具"}',
     '当准备回复用户时，输出：{"action":"respond","reply":"给用户看的回复","suggestions":["可选建议"],"resume_updated":true/false,"resume_updated_content_md":"若本轮改了简历则返回最新完整 Markdown，否则空字符串","memory_update":{"should_update":true/false,"reason":"为什么更新长期记忆","content_md":"完整长期记忆 Markdown 或空字符串"}}',
     '如果你已经通过 update_resume 修改了简历，最终 respond 时必须把 resume_updated 设为 true。',
+    `## 岗位推荐触发规则（最高优先级）
+当用户消息包含以下任何意图时，你必须立即调用 smart_job_recommend 工具，不能只用文字回答：
+- 推荐/筛选/匹配/找/选 + 岗位/工作/职位/公司
+- 不要外包/排除外包/非外包
+- 薪资/工资 + 要求/不低于/以上/至少
+- 根据简历/按照简历/结合简历 + 推荐/匹配
+- 帮我找/给我推荐/帮我筛选 + 工作/岗位
+- 合适的岗位/适合我的/匹配的工作
+- 把岗位加入工作台/放到工作台
+
+检测到上述意图后的标准流程：
+1. 调用 smart_job_recommend，将用户的完整要求作为 requirements 参数
+2. 收到结果后，向用户展示推荐摘要（扫描数、过滤数、推荐数）
+3. 列出前几个推荐岗位的标题、公司、薪资、匹配分数和理由
+4. 询问用户是否将推荐岗位加入工作台
+5. 如果用户确认，调用 batch_select_jobs 批量标记`,
     `## 硬性约束
 1. 【最小修改原则】只修改用户明确要求的部分，不主动修改其他内容
 2. 【格式保持】保持原有Markdown格式和结构不变
@@ -814,6 +850,48 @@ async function executeAssistantTool({ db, toolName, args, currentJobId, resume }
     case 'web_search': {
       return await searchWeb(args?.query, Math.max(1, Math.min(Number(args?.limit) || 5, 10)));
     }
+    case 'smart_job_recommend': {
+      const { recommendJobs } = require('./services/job-recommender');
+      const resumeData = resume || resumeDb.getLatestResume();
+      const resumeMd = resumeData?.content_md || '';
+      const requirements = String(args?.requirements || '').trim();
+      if (!requirements) throw new Error('请提供筛选要求');
+      if (!resumeMd) throw new Error('请先上传简历');
+
+      const llmClient = createActiveLLMClient(db);
+      const result = await recommendJobs({
+        userPrompt: requirements,
+        resumeMd,
+        db,
+        llmClient,
+        topN: Number(args?.top_n) || 20,
+      });
+
+      // 如果用户要求自动选中
+      if (args?.auto_select && result.success && result.jobs.length > 0) {
+        const updateStmt = db.prepare('UPDATE scraped_jobs SET selected = 1 WHERE id = ?');
+        for (const job of result.jobs) {
+          updateStmt.run(job.id);
+        }
+        result.auto_selected = true;
+        result.auto_selected_count = result.jobs.length;
+      }
+
+      return result;
+    }
+    case 'batch_select_jobs': {
+      const jobIds = args?.job_ids;
+      if (!Array.isArray(jobIds) || jobIds.length === 0) {
+        throw new Error('job_ids 必须是非空数组');
+      }
+      const updateStmt = db.prepare('UPDATE scraped_jobs SET selected = 1 WHERE id = ?');
+      let updated = 0;
+      for (const id of jobIds) {
+        const r = updateStmt.run(Number(id));
+        if (r.changes > 0) updated++;
+      }
+      return { success: true, updated, total: jobIds.length };
+    }
     default:
       throw new Error(`未知工具: ${toolName}`);
   }
@@ -945,6 +1023,7 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
         list_selected_jobs: '📌 正在读取收藏岗位...',
         web_search: '🌐 正在搜索网络...',
         fetch_url: '🔗 正在读取网页...',
+        smart_job_recommend: '🎯 正在智能推荐岗位...',
       };
       onProgress({ type: 'tool', tool: toolName, message: TOOL_LABELS[toolName] || `🔧 正在执行 ${toolName}...` });
 
@@ -973,6 +1052,15 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
           change_summary: toolResult.resume_change_summary || {},
         });
         onProgress({ type: 'resume_updated', message: '✅ 简历局部更新' });
+      }
+
+      // 推荐岗位结果实时推送给前端
+      if (toolName === 'smart_job_recommend' && toolResult?.success && toolResult?.jobs) {
+        onProgress({
+          type: 'job_recommendations',
+          summary: toolResult.summary || {},
+          jobs: toolResult.jobs || [],
+        });
       }
 
       toolTrace.push({

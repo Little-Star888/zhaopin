@@ -4026,6 +4026,124 @@ function addAIUserMessage(text) {
   aiMessages.scrollTop = aiMessages.scrollHeight;
 }
 
+/**
+ * 渲染 AI 推荐岗位卡片到聊天区域
+ */
+function renderJobRecommendationCards(data) {
+  const aiMessages = document.getElementById('aiMessages');
+  if (!aiMessages) return;
+
+  const cardsContainer = document.createElement('div');
+  cardsContainer.className = 'ai-recommend-cards';
+  cardsContainer.innerHTML = `
+    <div class="recommend-header">
+      <span class="recommend-icon">🎯</span>
+      <span class="recommend-title">智能推荐岗位</span>
+      <button class="recommend-action-btn recommend-select-all" onclick="selectAllRecommendedJobs(this)">
+        全部加入工作台
+      </button>
+    </div>
+    <div class="recommend-list" id="recommendJobList">
+      <p class="recommend-loading">岗位推荐数据将在 AI 回复中展示</p>
+    </div>
+  `;
+
+  const lastMessage = aiMessages.querySelector('.message.ai:last-of-type');
+  if (lastMessage) {
+    lastMessage.after(cardsContainer);
+  } else {
+    aiMessages.appendChild(cardsContainer);
+  }
+  aiMessages.scrollTop = aiMessages.scrollHeight;
+}
+
+/**
+ * 渲染单个推荐岗位卡片
+ */
+function renderSingleRecommendCard(job) {
+  const scoreClass = job.score >= 80 ? 'high' : job.score >= 60 ? 'medium' : 'low';
+  const reasons = (job.reasons || []).map(r => `<span class="reason-tag">${escapeHtml(r)}</span>`).join('');
+
+  return `
+    <div class="recommend-job-card" data-job-id="${job.id}">
+      <div class="recommend-card-header">
+        <span class="recommend-score score-${scoreClass}">${job.score}分</span>
+        <span class="recommend-job-title">${escapeHtml(job.title || '')}</span>
+        <button class="recommend-select-btn" onclick="selectRecommendedJob(${job.id}, this)" title="加入工作台">
+          ➕
+        </button>
+      </div>
+      <div class="recommend-card-body">
+        <span class="recommend-company">${escapeHtml(job.company || '')}</span>
+        <span class="recommend-salary">${escapeHtml(job.salary || '')}</span>
+        <span class="recommend-location">${escapeHtml(job.location || '')}</span>
+      </div>
+      ${reasons ? `<div class="recommend-reasons">${reasons}</div>` : ''}
+    </div>
+  `;
+}
+
+/**
+ * 选中单个推荐岗位
+ */
+async function selectRecommendedJob(jobId, btnEl) {
+  try {
+    btnEl.disabled = true;
+    btnEl.textContent = '⏳';
+    const resp = await fetch(`${window.__apiBase || 'http://127.0.0.1:7893'}/api/jobs/select`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: jobId, selected: true }),
+    });
+    if (resp.ok) {
+      btnEl.textContent = '✅';
+      btnEl.classList.add('selected');
+    } else {
+      btnEl.textContent = '❌';
+      btnEl.disabled = false;
+    }
+  } catch (e) {
+    console.error('[推荐] 选中失败:', e);
+    btnEl.textContent = '❌';
+    btnEl.disabled = false;
+  }
+}
+
+/**
+ * 全部加入工作台
+ */
+async function selectAllRecommendedJobs(btnEl) {
+  const cards = document.querySelectorAll('.recommend-job-card');
+  const jobIds = Array.from(cards).map(c => Number(c.dataset.jobId)).filter(Boolean);
+  if (jobIds.length === 0) return;
+
+  btnEl.disabled = true;
+  btnEl.textContent = '⏳ 导入中...';
+
+  let successCount = 0;
+  for (const id of jobIds) {
+    try {
+      const resp = await fetch(`${window.__apiBase || 'http://127.0.0.1:7893'}/api/jobs/select`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: id, selected: true }),
+      });
+      if (resp.ok) successCount++;
+    } catch (e) { /* continue */ }
+  }
+
+  btnEl.textContent = `✅ 已导入 ${successCount}/${jobIds.length}`;
+
+  cards.forEach(card => {
+    const btn = card.querySelector('.recommend-select-btn');
+    if (btn) {
+      btn.textContent = '✅';
+      btn.classList.add('selected');
+      btn.disabled = true;
+    }
+  });
+}
+
 function addAIResponseMessage(text, sender = 'AI 助手') {
   const aiMessages = document.getElementById('aiMessages');
   const typingIndicator = document.getElementById('typingIndicator');
@@ -4295,6 +4413,63 @@ function shouldTriggerDeepThink(text, context) {
               statusEl.textContent = event.message;
               statusEl.style.display = 'block';
             }
+            // 捕获推荐岗位进度
+            if (event.type === 'tool' && event.tool === 'smart_job_recommend') {
+              const progressDiv = document.getElementById('aiRecommendProgress');
+              if (!progressDiv) {
+                const container = document.createElement('div');
+                container.id = 'aiRecommendProgress';
+                container.className = 'ai-recommend-progress';
+                container.innerHTML = '<span class="recommend-spinner"></span> 正在智能匹配岗位，请稍候...';
+                const aiMessages = document.getElementById('aiMessages');
+                const typingIndicator = document.getElementById('typingIndicator');
+                if (aiMessages && typingIndicator) {
+                  aiMessages.insertBefore(container, typingIndicator);
+                } else if (aiMessages) {
+                  aiMessages.appendChild(container);
+                }
+              }
+            }
+            // 捕获推荐岗位结果
+            if (event.type === 'job_recommendations' && Array.isArray(event.jobs)) {
+              const progress = document.getElementById('aiRecommendProgress');
+              if (progress) progress.remove();
+
+              window.__lastRecommendations = event;
+
+              const aiMessages = document.getElementById('aiMessages');
+              if (aiMessages && event.jobs.length > 0) {
+                const cardsContainer = document.createElement('div');
+                cardsContainer.className = 'ai-recommend-cards';
+
+                const summary = event.summary || {};
+                const summaryText = summary.total_scanned
+                  ? `扫描 ${summary.total_scanned} 个岗位，过滤后 ${summary.after_hard_filter} 个，推荐 ${summary.recommended} 个`
+                  : `推荐 ${event.jobs.length} 个匹配岗位`;
+
+                cardsContainer.innerHTML = `
+                  <div class="recommend-header">
+                    <span class="recommend-icon">🎯</span>
+                    <span class="recommend-title">智能推荐岗位</span>
+                    <span class="recommend-summary">${summaryText}</span>
+                    <button class="recommend-action-btn recommend-select-all" onclick="selectAllRecommendedJobs(this)">
+                      全部加入工作台
+                    </button>
+                  </div>
+                  <div class="recommend-list">
+                    ${event.jobs.map(job => renderSingleRecommendCard(job)).join('')}
+                  </div>
+                `;
+
+                const typingIndicator = document.getElementById('typingIndicator');
+                if (typingIndicator) {
+                  aiMessages.insertBefore(cardsContainer, typingIndicator);
+                } else {
+                  aiMessages.appendChild(cardsContainer);
+                }
+                aiMessages.scrollTop = aiMessages.scrollHeight;
+              }
+            }
             // 实时应用结构化操作到简历预览
             if (event.type === 'resume_ops_batch' && Array.isArray(event.ops)) {
               pendingOps.push(...event.ops);
@@ -4341,6 +4516,17 @@ function shouldTriggerDeepThink(text, context) {
 
       const reply = displayReply;
       addAIResponseMessage(reply);
+      // 渲染推荐岗位卡片（如果本轮有推荐结果）
+      if (data.tool_trace && data.tool_trace.some(t => t.tool === 'smart_job_recommend')) {
+        try {
+          renderJobRecommendationCards(data);
+        } catch (renderErr) {
+          console.warn('[AI] 推荐卡片渲染失败:', renderErr.message);
+        }
+      }
+      // 清理进度条
+      const progressEl = document.getElementById('aiRecommendProgress');
+      if (progressEl) progressEl.remove();
       aiConversationHistory.push({ role: 'assistant', text: reply });
       saveAssistantSession(jobId, aiConversationHistory);
 

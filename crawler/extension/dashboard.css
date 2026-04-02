@@ -3623,3 +3623,199 @@ body.ai-active .sp-r { width: 30%; min-width: 320px; opacity: 1; pointer-events:
         padding: 16px;
     }
 }
+
+/* ============ AI 岗位推荐卡片样式 ============ */
+.ai-recommend-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  margin: 8px 0;
+  background: #f0f7ff;
+  border-radius: 8px;
+  color: #1a73e8;
+  font-size: 13px;
+  animation: fadeIn 0.3s ease;
+}
+
+.recommend-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #1a73e8;
+  border-top: 2px solid transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.ai-recommend-cards {
+  margin: 12px 0;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+}
+
+.recommend-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.recommend-icon {
+  font-size: 18px;
+}
+
+.recommend-title {
+  font-size: 14px;
+  font-weight: 600;
+  flex: 1;
+}
+
+.recommend-action-btn {
+  padding: 4px 12px;
+  border: 1px solid rgba(255,255,255,0.5);
+  border-radius: 6px;
+  background: rgba(255,255,255,0.15);
+  color: white;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.recommend-action-btn:hover {
+  background: rgba(255,255,255,0.3);
+}
+
+.recommend-action-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.recommend-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.recommend-loading {
+  text-align: center;
+  color: #999;
+  padding: 20px;
+  font-size: 13px;
+}
+
+.recommend-job-card {
+  padding: 10px 12px;
+  margin: 4px 0;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  transition: all 0.2s;
+  cursor: default;
+}
+
+.recommend-job-card:hover {
+  border-color: #d0d0f0;
+  background: #fafaff;
+}
+
+.recommend-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.recommend-score {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.recommend-score.score-high {
+  background: #e6f7e9;
+  color: #1a9e3f;
+}
+
+.recommend-score.score-medium {
+  background: #fff7e6;
+  color: #d48806;
+}
+
+.recommend-score.score-low {
+  background: #fff1f0;
+  color: #cf1322;
+}
+
+.recommend-job-title {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 500;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recommend-select-btn {
+  border: none;
+  background: none;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.recommend-select-btn:hover {
+  background: #f0f0f0;
+}
+
+.recommend-select-btn.selected {
+  cursor: default;
+}
+
+.recommend-card-body {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: #666;
+}
+
+.recommend-company {
+  font-weight: 500;
+}
+
+.recommend-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.reason-tag {
+  display: inline-block;
+  padding: 1px 6px;
+  background: #f5f0ff;
+  color: #7c3aed;
+  border-radius: 3px;
+  font-size: 11px;
+}
+
+.recommend-summary {
+  font-size: 11px;
+  opacity: 0.85;
+}
