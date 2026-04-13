@@ -4599,6 +4599,14 @@ function shouldTriggerDeepThink(text, context) {
           console.warn('[AI] 推荐卡片渲染失败:', renderErr.message);
         }
       }
+      // 收藏列表同步：检查本轮是否有工具实际修改了收藏状态
+      if (data.tool_trace && data.tool_trace.some(t => {
+        if (t.tool === 'batch_select_jobs' || t.tool === 'batch_deselect_jobs' || t.tool === 'clear_all_favorites' || t.tool === 'filter_favorites') return true;
+        if (t.tool === 'smart_job_recommend' && t.result && t.result.auto_selected) return true;
+        return false;
+      })) {
+        loadDeliveryList();
+      }
       // 清理进度条
       const progressEl = document.getElementById('aiRecommendProgress');
       if (progressEl) progressEl.remove();

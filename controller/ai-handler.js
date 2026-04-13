@@ -68,7 +68,7 @@ function sanitizeAIResumeMarkdown(md) {
 
 const REFERENCE_TEXT_LIMIT = 3500;
 const PROJECT_SKILL_FILE = path.join(__dirname, '../SKILL.md');
-const ASSISTANT_MAX_TOOL_STEPS = 6;
+const ASSISTANT_MAX_TOOL_STEPS = 8;
 const ASSISTANT_SQL_ROW_LIMIT = 50;
 const CONTROLLER_BASE_URL = `http://127.0.0.1:${process.env.CONTROLLER_PORT || '7893'}`;
 
@@ -598,6 +598,22 @@ const ASSISTANT_TOOL_SCHEMAS = [
     },
     returns: '返回清除的岗位数量。'
   },
+  {
+    name: 'filter_favorites',
+    description: '对当前收藏列表进行语义筛选，根据自然语言条件保留或移除特定岗位。当用户要求"去掉海外的"、"只留北京的"、"去掉外包"等语义过滤时使用此工具。',
+    parameters: {
+      type: 'object',
+      properties: {
+        instruction: { type: 'string', description: '筛选指令，如"去掉海外岗位"、"只保留北京的"、"移除薪资低于10K的"、"去掉外包公司"' },
+        action: { type: 'string', enum: ['exclude', 'keep_only'], description: 'exclude=移除匹配的岗位，keep_only=只保留匹配的岗位' },
+        limit: { type: 'number', description: '最多处理的岗位数量，默认全部' },
+        dry_run: { type: 'boolean', description: 'true=仅预览不执行，默认 false' }
+      },
+      required: ['instruction', 'action'],
+      additionalProperties: false
+    },
+    returns: '返回匹配的岗位列表、移除/保留数量和原因摘要。'
+  },
 ];
 
 function getAssistantToolSchemaMap() {
@@ -742,6 +758,7 @@ function getToolExecutionMeta(toolName) {
     batch_select_jobs: 'controller/jobs-db.js',
     batch_deselect_jobs: 'controller/jobs-db.js',
     clear_all_favorites: 'controller/jobs-db.js',
+    filter_favorites: 'controller/ai-handler.js',
   };
 
   return {
@@ -765,6 +782,10 @@ function summarizeToolResult(toolName, toolResult) {
       return `已移出工作台 ${toolResult.updated || 0} 条`;
     case 'clear_all_favorites':
       return `已清空全部收藏 ${toolResult.cleared || 0} 条`;
+    case 'filter_favorites':
+      return toolResult.dry_run
+        ? `[预览] 匹配 ${toolResult.matched_jobs?.length || 0} 条，${toolResult.action === 'exclude' ? '将被移除' : '将被保留'}`
+        : `${toolResult.action === 'exclude' ? '已移除' : '已保留'} ${toolResult.affected_count || 0} 条`;
     case 'search_jobs_db':
       return `命中 ${Array.isArray(toolResult.jobs) ? toolResult.jobs.length : 0} 条岗位`;
     case 'list_selected_jobs':
@@ -1432,6 +1453,15 @@ async function handleDirectAssistantIntent({ db, intent, message, onProgress }) 
   return null;
 }
 
+function safeParsePayload(rawPayload) {
+  try {
+    if (!rawPayload) return {};
+    return typeof rawPayload === 'string' ? JSON.parse(rawPayload) : (rawPayload || {});
+  } catch {
+    return {};
+  }
+}
+
 async function executeAssistantTool({ db, toolName, args, currentJobId, resume, onProgress = null }) {
   const validatedArgs = validateAssistantToolArguments(toolName, args);
 
@@ -1709,6 +1739,129 @@ async function executeAssistantTool({ db, toolName, args, currentJobId, resume, 
       const clearResult = jobsDb.clearAllFavorites();
       return { success: true, cleared: clearResult.cleared };
     }
+    case 'filter_favorites': {
+      const ffInstruction = validatedArgs?.instruction;
+      const ffAction = validatedArgs?.action || 'exclude';
+      const ffLimit = validatedArgs?.limit || 0;
+      const ffDryRun = validatedArgs?.dry_run || false;
+
+      if (!ffInstruction) {
+        throw new Error('instruction 参数不能为空');
+      }
+
+      const allFavorites = jobsDb.getFavoriteJobs();
+      if (allFavorites.length === 0) {
+        return {
+          success: true,
+          matched_jobs: [],
+          affected_count: 0,
+          action: ffAction,
+          dry_run: ffDryRun,
+          reason_summary: '收藏列表为空，无需筛选',
+        };
+      }
+
+      const candidates = ffLimit > 0 ? allFavorites.slice(0, ffLimit) : allFavorites;
+
+      const llmConfig = db.prepare('SELECT * FROM ai_configs WHERE is_active = 1 ORDER BY updated_at DESC, id DESC LIMIT 1').get();
+      if (!llmConfig) {
+        throw new Error('未配置 AI 模型，无法执行语义筛选');
+      }
+      const filterLLM = createLLMClient(llmConfig);
+
+      const jobSummaries = candidates.map((job, idx) => {
+        const payload = safeParsePayload(job.raw_payload);
+        const desc = (payload?.description || '').slice(0, 200);
+        return `${idx + 1}. [ID:${job.id}] ${job.title} - ${job.company} | ${job.location} | ${job.salary} | ${job.experience} | ${job.education}${desc ? ' | ' + desc : ''}`;
+      }).join('\n');
+
+      const filterPrompt = `你是一个精确的岗位筛选器。用户要求：「${ffInstruction}」
+
+以下是当前收藏列表中的岗位，请逐条判断每个岗位是否匹配用户要求。
+
+岗位列表：
+${jobSummaries}
+
+请返回严格 JSON（不要包含其他文本）：
+{
+  "judgments": [
+    {"id": 岗位ID, "matched": true/false, "reason": "一句话说明原因"}
+  ]
+}
+
+判断标准：
+- matched=true 表示该岗位**符合**用户的筛选条件（例如"海外岗"中，海外岗位为 true）
+- 如果信息不足以判断，保守地设为 false
+- 只返回 JSON，不要返回其他内容`;
+
+      const filterResult = await filterLLM.chat([
+        { role: 'system', content: '你只返回 JSON，不返回其他文本。' },
+        { role: 'user', content: filterPrompt },
+      ]);
+
+      const filterParsed = extractJsonObject(filterResult.content);
+      if (!filterParsed || !Array.isArray(filterParsed.judgments)) {
+        throw new Error('AI 筛选结果解析失败');
+      }
+
+      const judgments = new Map(
+        filterParsed.judgments
+          .filter(j => typeof j.id === 'number')
+          .map(j => [j.id, j])
+      );
+
+      const matchedJobs = [];
+      const matchedIds = [];
+
+      for (const job of candidates) {
+        const j = judgments.get(job.id);
+        if (j && j.matched) {
+          matchedJobs.push({
+            id: job.id,
+            title: job.title,
+            company: job.company,
+            location: job.location,
+            salary: job.salary,
+            reason: j.reason || '',
+          });
+          matchedIds.push(job.id);
+        }
+      }
+
+      if (ffDryRun) {
+        return {
+          success: true,
+          matched_jobs: matchedJobs,
+          affected_count: matchedIds.length,
+          action: ffAction,
+          dry_run: true,
+          reason_summary: matchedJobs.map(j => `${j.title}(${j.company}): ${j.reason}`).join('; '),
+        };
+      }
+
+      let affectedCount = 0;
+      if (ffAction === 'exclude' && matchedIds.length > 0) {
+        const excludeResult = jobsDb.batchSetFavorite(matchedIds, false);
+        affectedCount = excludeResult.updated;
+      } else if (ffAction === 'keep_only') {
+        const removeIds = candidates
+          .filter(job => !matchedIds.includes(job.id))
+          .map(job => job.id);
+        if (removeIds.length > 0) {
+          const removeResult = jobsDb.batchSetFavorite(removeIds, false);
+          affectedCount = removeResult.updated;
+        }
+      }
+
+      return {
+        success: true,
+        matched_jobs: matchedJobs,
+        affected_count: affectedCount,
+        action: ffAction,
+        dry_run: false,
+        reason_summary: matchedJobs.map(j => `${j.title}(${j.company}): ${j.reason}`).join('; '),
+      };
+    }
     default:
       throw new Error(`未知工具: ${toolName}`);
   }
@@ -1760,6 +1913,7 @@ async function runAssistantLoop({ llmClient, systemPrompt, conversationHistory, 
         toolTrace.push({
           tool: toolName,
           reason: 'native_tool_call',
+          result: summarizeToolResult(toolName, toolResult),
         });
 
         messages.push({
@@ -1770,7 +1924,7 @@ async function runAssistantLoop({ llmClient, systemPrompt, conversationHistory, 
           role: 'tool',
           tool_call_id: toolCall.id,
           name: toolName,
-          content: JSON.stringify(toolResult),
+          content: JSON.stringify(toolResult) + `\n\n[runtime] 剩余工具预算: ${ASSISTANT_MAX_TOOL_STEPS - step - 1}/${ASSISTANT_MAX_TOOL_STEPS}。优先使用批量/语义工具。`,
         });
       }
       continue;
@@ -1811,12 +1965,13 @@ async function runAssistantLoop({ llmClient, systemPrompt, conversationHistory, 
       toolTrace.push({
         tool: parsed.tool,
         reason: String(parsed.reason || '').trim(),
+        result: summarizeToolResult(parsed.tool, toolResult),
       });
 
       messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
       messages.push({
         role: 'user',
-        content: `工具 ${parsed.tool} 的执行结果如下，请继续：\n${JSON.stringify(toolResult)}`
+        content: `工具 ${parsed.tool} 的执行结果如下，请继续：\n${JSON.stringify(toolResult)}\n\n[runtime] 剩余工具预算: ${ASSISTANT_MAX_TOOL_STEPS - step - 1}/${ASSISTANT_MAX_TOOL_STEPS}。优先使用批量/语义工具。`
       });
       continue;
     }
@@ -1915,6 +2070,7 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
           batch_select_jobs: '📥 正在加入工作台...',
           batch_deselect_jobs: '📤 正在移出工作台...',
         clear_all_favorites: '🗑️ 正在清空全部收藏...',
+          filter_favorites: '🔍 正在语义筛选收藏...',
         };
         onProgress({ type: 'tool', tool: toolName, message: TOOL_LABELS[toolName] || `🔧 正在执行 ${toolName}...` });
 
@@ -1956,6 +2112,7 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
         toolTrace.push({
           tool: toolName,
           reason: 'native_tool_call',
+          result: summarizeToolResult(toolName, toolResult),
         });
 
         onProgress({
@@ -1966,6 +2123,11 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
           file: toolMeta.file,
         });
 
+        const remainingSteps = ASSISTANT_MAX_TOOL_STEPS - step - 1;
+        const budgetHint = remainingSteps > 0
+          ? `\n\n[runtime] 剩余工具预算: ${remainingSteps}/${ASSISTANT_MAX_TOOL_STEPS}。优先使用批量/语义工具。`
+          : '\n\n[runtime] ⚠ 已达工具预算上限，本轮不再调用工具，直接回复用户。';
+
         messages.push({
           role: 'assistant',
           content: result.content || '',
@@ -1974,7 +2136,7 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
           role: 'tool',
           tool_call_id: toolCall.id,
           name: toolName,
-          content: JSON.stringify(toolResult),
+          content: JSON.stringify(toolResult) + budgetHint,
         });
       }
       continue;
@@ -2016,6 +2178,7 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
         batch_select_jobs: '📥 正在加入工作台...',
         batch_deselect_jobs: '📤 正在移出工作台...',
         clear_all_favorites: '🗑️ 正在清空全部收藏...',
+        filter_favorites: '🔍 正在语义筛选收藏...',
       };
       onProgress({
         type: 'trace',
@@ -2067,6 +2230,7 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
       toolTrace.push({
         tool: toolName,
         reason: String(parsed.reason || '').trim(),
+        result: summarizeToolResult(toolName, toolResult),
       });
 
       onProgress({
@@ -2077,10 +2241,15 @@ async function runAssistantLoopWithProgress({ llmClient, systemPrompt, conversat
         file: toolMeta.file,
       });
 
+      const remainingStepsJson = ASSISTANT_MAX_TOOL_STEPS - step - 1;
+      const budgetHintJson = remainingStepsJson > 0
+        ? `\n\n[runtime] 剩余工具预算: ${remainingStepsJson}/${ASSISTANT_MAX_TOOL_STEPS}。优先使用批量/语义工具。`
+        : '\n\n[runtime] ⚠ 已达工具预算上限，本轮不再调用工具，直接回复用户。';
+
       messages.push({ role: 'assistant', content: JSON.stringify(parsed) });
       messages.push({
         role: 'user',
-        content: `工具 ${toolName} 执行结果:\n${JSON.stringify(toolResult, null, 2)}`,
+        content: `工具 ${toolName} 执行结果:\n${JSON.stringify(toolResult, null, 2)}${budgetHintJson}`,
       });
 
       continue;
